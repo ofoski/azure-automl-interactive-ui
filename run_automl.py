@@ -1,5 +1,5 @@
 """AutoML job submission helper."""
-from automl import get_ml_client, register_training_data, run_automl_job
+from ml_pipeline import get_ml_client, register_training_data, run_automl_job
 
 
 def submit_automl_job(
