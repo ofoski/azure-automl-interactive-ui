@@ -2,3 +2,4 @@ streamlit
 pandas
 azure-ai-ml
 azure-identity
+openai
