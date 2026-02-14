@@ -2,23 +2,18 @@
 # AZURE ML CLIENT (authentication + workspace connection)
 # ============================================================
 from azure.ai.ml import MLClient
-from azure.identity import DefaultAzureCredential
+from azure.identity import InteractiveBrowserCredential
 import os
 
 
 def get_ml_client() -> MLClient:
-    """
-    Create and return an authenticated MLClient for Azure ML workspace.
-    
-    Requires environment variables:
-        - AZURE_SUBSCRIPTION_ID
-        - AZURE_RESOURCE_GROUP
-        - AZURE_WORKSPACE_NAME
-    
-    Returns:
-        MLClient: Authenticated client for Azure ML operations
-    """
-    credential = DefaultAzureCredential()
+    """Return an authenticated MLClient using workspace environment variables."""
+    tenant_id = os.environ.get("AZURE_TENANT_ID")
+    credential = (
+        InteractiveBrowserCredential(tenant_id=tenant_id)
+        if tenant_id
+        else InteractiveBrowserCredential()
+    )
     subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
     resource_group = os.environ.get("AZURE_RESOURCE_GROUP")
     workspace = os.environ.get("AZURE_WORKSPACE_NAME")

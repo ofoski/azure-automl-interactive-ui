@@ -16,3 +16,21 @@ job_type = {
     "Classification": automl.classification,
     "Regression": automl.regression,
 }
+
+
+PROBLEM_TYPE_ALIASES = {
+    "classification": "Classification",
+    "class": "Classification",
+    "binary": "Classification",
+    "multiclass": "Classification",
+    "multi-class": "Classification",
+    "regression": "Regression",
+    "regress": "Regression",
+    "continuous": "Regression",
+}
+
+
+def normalize_problem_type(value: str | None) -> str | None:
+    if not isinstance(value, str):
+        return None
+    return PROBLEM_TYPE_ALIASES.get(value.strip().lower())

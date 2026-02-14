@@ -1,6 +1,7 @@
 # ============================================================
 # AUTOML JOB SUBMISSION
 # ============================================================
+from azure.ai.ml import Input
 from .config import job_type
 
 def run_automl_job(
@@ -12,41 +13,36 @@ def run_automl_job(
     primary_metric: str,
     compute_name: str,
     experiment_name: str,
-    limits=None,
+    timeout_minutes: int = 15,
+    trial_timeout_minutes: int = 5,
+    max_trials: int = 4,
+    enable_early_termination: bool = True,
 ) -> str:
-    """
-    Create and submit an AutoML job.
-    
-    Args:
-        - ml_client: authenticated MLClient
-        - problem_type: 'Classification' or 'Regression'
-        - training_data: asset id (e.g., registered.id from register_training_data)
-        - target_column: column to predict
-        - primary_metric: metric to optimize (e.g., 'accuracy', 'r2_score')
-        - compute_name: name of compute target (e.g., 'automl-cpu-cluster')
-        - experiment_name: job name/experiment name
-        - limits: dict with cost controls (e.g., {'max_trials': 2, 'timeout_minutes': 15})
-    
-    Returns:
-        Job name (string) — use to track job in Azure ML Studio
-    """
+    """Create and submit an AutoML job and return the Azure job name."""
     
     if problem_type not in job_type:
-        raise ValueError(f"Unsupported problem_type: {problem_type}")
+        supported = ", ".join(sorted(job_type.keys()))
+        raise ValueError(
+            f"Unsupported problem_type: {problem_type}. Supported: {supported}"
+        )
 
     job_creator = job_type[problem_type]
 
-    # Default cost limits (override with limits arg if needed)
-    default_limits = {"max_trials": 3, "timeout_minutes": 15}
-    merged_limits = {**default_limits, **(limits or {})}
+    training_data_input = Input(type="mltable", path=training_data)
 
     job = job_creator(
-        training_data=training_data,
+        training_data=training_data_input,
         target_column_name=target_column,
         primary_metric=primary_metric,
         compute=compute_name,
         experiment_name=experiment_name,
-        limits=merged_limits,
+    )
+
+    job.set_limits(
+        timeout_minutes=timeout_minutes,
+        trial_timeout_minutes=trial_timeout_minutes,
+        max_trials=max_trials,
+        enable_early_termination=enable_early_termination,
     )
 
     submitted_job = ml_client.jobs.create_or_update(job)
