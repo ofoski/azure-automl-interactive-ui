@@ -1,206 +1,131 @@
-import json
-import streamlit as st
 import pandas as pd
-from llm_client import (
-    chat_completion,
-    get_missing_azure_openai_settings,
-    build_automl_system_prompt,
-)
-from run_automl import submit_automl_job
+import streamlit as st
+
+from run_automl import get_automl_job_details, submit_automl_job
 from utils import save_uploaded_file
-from ml_pipeline.config import normalize_problem_type
+
 
 st.set_page_config(page_title="AutoML Demo", layout="wide")
 
 st.title("Interactive AutoML Demo")
-st.caption("Upload a dataset and configure your AutoML experiment")
+st.caption("Upload a dataset and run Azure AutoML with a simple serverless configuration")
 
-# ============================================================
-# 1. Dataset upload
-# ============================================================
-uploaded_file = st.file_uploader(
-    "Upload a CSV file",
-    type=["csv"]
-)
+METRIC_BY_PROBLEM_TYPE = {
+    "Classification": ("Accuracy", "accuracy"),
+    "Regression": ("RMSE", "normalized_root_mean_squared_error"),
+}
+DEFAULT_VM_SIZE = "Standard_DS11_v2"
+TERMINAL_STATUSES = {"Completed", "Failed", "Canceled", "Cancelled"}
+
+
+uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
 if uploaded_file is not None:
-    # Save uploaded file to disk
     csv_path = save_uploaded_file(uploaded_file)
-    
-    df = pd.read_csv(uploaded_file)
+    dataframe = pd.read_csv(uploaded_file)
     st.success("Dataset loaded successfully")
 
-    default_metric_by_problem_type = {
-        "Classification": "Accuracy",
-        "Regression": "RMSE",
-    }
-    azure_metric_by_problem_type = {
-        "Classification": "accuracy",
-        "Regression": "normalized_root_mean_squared_error",
-    }
+    st.subheader("Training setup")
 
-    # ========================================================
-    # Assistant configuration
-    # ========================================================
-    st.subheader("Assistant")
+    target_column = st.selectbox("Target column", options=dataframe.columns.tolist(), index=0)
+    problem_type = st.radio("Problem type", options=["Classification", "Regression"], horizontal=True)
 
-    if "assistant_messages" not in st.session_state:
-        st.session_state.assistant_messages = [
-            {
-                "role": "assistant",
-                "content": "Hi! Which column should the model predict?",
-            }
-        ]
+    metric_label, azure_metric = METRIC_BY_PROBLEM_TYPE[problem_type]
 
-    if "assistant_config" not in st.session_state:
-        st.session_state.assistant_config = {
-            "target_column": None,
-            "problem_type": None,
+    config_table = pd.DataFrame(
+        {
+            "Setting": [
+                "Target column",
+                "Problem type",
+                "Primary metric",
+                "Compute",
+                "Rows",
+                "Columns",
+            ],
+            "Value": [
+                target_column,
+                problem_type,
+                metric_label,
+                f"Serverless CPU ({DEFAULT_VM_SIZE})",
+                dataframe.shape[0],
+                dataframe.shape[1],
+            ],
         }
+    )
+    st.table(config_table.astype(str))
 
-    for message in st.session_state.assistant_messages:
-        st.chat_message(message["role"]).write(message["content"])
-
-    env_missing = get_missing_azure_openai_settings()
-
-    if env_missing:
-        st.warning(
-            "Azure OpenAI is not configured. Set AZURE_OPENAI_ENDPOINT, "
-            "AZURE_OPENAI_API_KEY, and AZURE_OPENAI_DEPLOYMENT as environment "
-            "variables or Streamlit secrets."
-        )
-    else:
-        user_input = st.chat_input("Type your answer")
-
-        if user_input:
-            st.session_state.assistant_messages.append(
-                {"role": "user", "content": user_input}
-            )
-
-            known_config = st.session_state.assistant_config
-            stripped_input = user_input.strip()
-
-            if not known_config.get("target_column") and stripped_input in df.columns:
-                known_config["target_column"] = stripped_input
-                assistant_message = "Great. Is this Classification or Regression?"
-                st.session_state.assistant_messages.append(
-                    {"role": "assistant", "content": assistant_message}
-                )
-                st.rerun()
-
-            if known_config.get("target_column") and not known_config.get("problem_type"):
-                normalized_problem_type = normalize_problem_type(stripped_input)
-                if normalized_problem_type:
-                    known_config["problem_type"] = normalized_problem_type
-                    assistant_message = "Perfect. I have everything needed to run AutoML."
-                    st.session_state.assistant_messages.append(
-                        {"role": "assistant", "content": assistant_message}
-                    )
-                    st.rerun()
-
-            system_prompt = build_automl_system_prompt(
-                columns_list=df.columns.tolist(),
-            )
-
+    if st.button("Start AutoML experiment 🚀", use_container_width=True):
+        with st.spinner("Submitting AutoML job to Azure..."):
             try:
-                response_text = chat_completion(
-                    [{"role": "system", "content": system_prompt}]
-                    + st.session_state.assistant_messages[-6:]
+                data_name = f"data-{uploaded_file.name.replace('.csv', '')}"
+                job_name = submit_automl_job(
+                    csv_path=str(csv_path),
+                    target_column=target_column,
+                    problem_type=problem_type,
+                    primary_metric=azure_metric,
+                    data_name=data_name,
+                    vm_size=DEFAULT_VM_SIZE,
+                    experiment_name="streamlit-automl-demo",
                 )
-                parsed = json.loads(response_text)
-            except Exception:
-                parsed = None
-                response_text = (
-                    "I had trouble understanding that. "
-                    "Please tell me the target column name exactly as shown."
-                )
+                st.session_state["latest_automl_job_name"] = job_name
+                st.success(f"Job submitted successfully: {job_name}")
+            except Exception as error:
+                st.error(f"Error submitting job: {error}")
 
-            if parsed:
-                candidate_target = parsed.get("target_column")
-                candidate_problem_type = parsed.get("problem_type")
+latest_job_name = st.session_state.get("latest_automl_job_name")
+if latest_job_name:
+    st.subheader("Last result")
 
-                if isinstance(candidate_target, str) and candidate_target in df.columns:
-                    known_config["target_column"] = candidate_target
+    if st.button("Refresh job status"):
+        st.rerun()
 
-                if isinstance(candidate_problem_type, str):
-                    known_config["problem_type"] = normalize_problem_type(candidate_problem_type)
+    try:
+        job_details = get_automl_job_details(latest_job_name)
 
-                assistant_message = parsed.get("message") or "Thanks. What else should I know?"
-            else:
-                assistant_message = response_text
+        status_text = str(job_details.get("status", "Unknown"))
+        primary_metric = str(job_details.get("primary_metric") or "N/A").upper()
+        best_score = job_details.get("best_metric_value")
+        best_score_text = f"{best_score:.5f}" if isinstance(best_score, (int, float)) else "N/A"
 
-            if known_config.get("target_column") and not known_config.get("problem_type"):
-                assistant_message = "Great. Is this Classification or Regression?"
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Status", status_text)
+        col2.metric("Primary metric", primary_metric)
+        col3.metric("Best score", best_score_text)
 
-            st.session_state.assistant_messages.append(
-                {"role": "assistant", "content": assistant_message}
-            )
-            st.rerun()
+        if status_text in TERMINAL_STATUSES:
+            best_algorithm = job_details.get("best_algorithm")
+            best_run_name = job_details.get("best_run_name")
+            if best_algorithm or best_run_name:
+                st.write(f"**Best model**: {best_algorithm or best_run_name}")
 
-    assistant_config = st.session_state.assistant_config
-    target_column = assistant_config.get("target_column")
-    final_problem_type = assistant_config.get("problem_type")
-    selected_metric = default_metric_by_problem_type.get(final_problem_type)
-
-    if target_column and final_problem_type:
-        # ========================================================
-        # Review AutoML configuration
-        # ========================================================
-        st.subheader("Review configuration")
-
-        config_df = pd.DataFrame(
-            {
-                "Setting": [
-                    "Target column",
-                    "Problem type",
-                    "Primary metric",
-                    "Number of rows",
-                    "Number of columns",
-                ],
-                "Value": [
-                    target_column,
-                    final_problem_type,
-                    selected_metric,
-                    df.shape[0],
-                    df.shape[1],
-                ],
-            }
-        )
-
-        st.table(config_df.astype(str))
-
-        st.info(
-            "This configuration will be used to set up the Azure AutoML experiment. "
-            "You will be able to adjust compute and cost limits in the next step."
-        )
-
-        # ========================================================
-        # Launch AutoML
-        # ========================================================
-        st.subheader("Run AutoML")
-
-        if st.button(
-            "Start AutoML experiment 🚀",
-            help="This will submit an AutoML job to Azure using the configuration above.",
-            key="assistant_run_automl",
-        ):
-            with st.spinner("Submitting AutoML job to Azure..."):
-                try:
-                    azure_metric = azure_metric_by_problem_type[final_problem_type]
-                    data_name = f"data-{uploaded_file.name.replace('.csv', '')}"
-
-                    job_name = submit_automl_job(
-                        csv_path=str(csv_path),
-                        target_column=target_column,
-                        problem_type=final_problem_type,
-                        primary_metric=azure_metric,
-                        data_name=data_name,
-                        experiment_name="streamlit-automl-demo",
+            top_models = job_details.get("top_models") or []
+            if top_models:
+                leaderboard_rows = []
+                for index, model in enumerate(top_models, start=1):
+                    leaderboard_rows.append(
+                        {
+                            "Rank": index,
+                            "Model": model.get("algorithm") or model.get("run_name") or "N/A",
+                            "Score": f"{model.get('score'):.5f}",
+                        }
                     )
+                st.subheader("Top models")
+                st.dataframe(pd.DataFrame(leaderboard_rows), use_container_width=True, hide_index=True)
 
-                    st.success(f"✅ Job submitted successfully: {job_name}")
-                    st.info("View your job in Azure ML Studio")
+            feature_importance = job_details.get("feature_importance")
+            if isinstance(feature_importance, dict) and feature_importance:
+                fi_df = pd.DataFrame(
+                    {
+                        "Feature": list(feature_importance.keys()),
+                        "Importance": list(feature_importance.values()),
+                    }
+                )
+                st.subheader("Feature importance")
+                st.dataframe(fi_df, use_container_width=True, hide_index=True)
+            else:
+                st.caption("Feature importance is not available for this run.")
+        else:
+            st.info("Training is still in progress. Refresh to see results.")
 
-                except Exception as e:
-                    st.error(f"❌ Error submitting job: {e}")
-                    st.exception(e)
+    except Exception as error:
+        st.warning(f"Unable to fetch job details right now: {error}")
