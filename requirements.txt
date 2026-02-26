@@ -2,4 +2,6 @@ streamlit
 pandas
 azure-ai-ml
 azure-identity
+azure-mgmt-cognitiveservices
+azure-mgmt-resource
 openai

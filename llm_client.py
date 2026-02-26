@@ -2,6 +2,7 @@ import json
 import os
 import re
 from functools import lru_cache
+from time import sleep
 
 from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
 from openai import AzureOpenAI
@@ -46,6 +47,76 @@ def _sanitize_name(value: str, default_value: str) -> str:
     if not cleaned:
         cleaned = default_value
     return cleaned[:32].lower()
+
+
+def _chat_completion_with_retry(client: AzureOpenAI, **kwargs):
+    last_error = None
+    for attempt in range(4):
+        try:
+            return client.chat.completions.create(**kwargs)
+        except Exception as error:
+            last_error = error
+            message = str(error).lower()
+            is_transient = any(
+                token in message
+                for token in ("connection error", "timed out", "timeout", "429", "rate limit")
+            )
+            if attempt < 3 and is_transient:
+                sleep(2 * (attempt + 1))
+                continue
+            break
+    raise RuntimeError(
+        "Azure OpenAI request failed. Verify endpoint/deployment/network. "
+        f"Details: {last_error}"
+    )
+
+
+def _wait_until_openai_ready(settings: dict[str, str]) -> None:
+    """Best-effort warmup for newly created accounts/deployments."""
+    client = AzureOpenAI(
+        azure_endpoint=settings["endpoint"],
+        api_key=settings["api_key"],
+        api_version=settings["api_version"],
+        timeout=30.0,
+        max_retries=1,
+    )
+    last_error = None
+    for attempt in range(8):
+        try:
+            client.chat.completions.create(
+                model=settings["deployment"],
+                temperature=0,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+            return
+        except Exception as error:
+            last_error = error
+            sleep(5)
+    raise RuntimeError(
+        "Configured Azure OpenAI endpoint/deployment is not reachable from this machine. "
+        f"Endpoint: {settings['endpoint']} Deployment: {settings['deployment']} Details: {last_error}"
+    )
+
+
+def _is_openai_reachable(settings: dict[str, str]) -> bool:
+    try:
+        client = AzureOpenAI(
+            azure_endpoint=settings["endpoint"],
+            api_key=settings["api_key"],
+            api_version=settings["api_version"],
+            timeout=10.0,
+            max_retries=0,
+        )
+        client.chat.completions.create(
+            model=settings["deployment"],
+            temperature=0,
+            max_tokens=1,
+            messages=[{"role": "user", "content": "ping"}],
+        )
+        return True
+    except Exception:
+        return False
 
 
 def _ensure_openai_account(cog_client, location: str) -> str:
@@ -194,12 +265,14 @@ def get_azure_openai_settings() -> dict[str, str]:
     deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
 
     if endpoint and api_key and deployment:
-        return {
+        env_settings = {
             "endpoint": endpoint,
             "api_key": api_key,
             "deployment": deployment,
             "api_version": api_version,
         }
+        if _is_openai_reachable(env_settings):
+            return env_settings
 
     ml_client = get_ml_client(ensure_resources=False)
     provisioned = _discover_or_create_openai(ml_client)
@@ -222,12 +295,16 @@ def get_azure_openai_client() -> AzureOpenAI:
         azure_endpoint=settings["endpoint"],
         api_key=settings["api_key"],
         api_version=settings["api_version"],
+        timeout=45.0,
+        max_retries=2,
     )
 
 
 def ensure_azure_openai_ready() -> dict[str, str]:
     """Force provisioning/discovery and return active settings."""
-    return get_azure_openai_settings()
+    settings = get_azure_openai_settings()
+    _wait_until_openai_ready(settings)
+    return settings
 
 
 def detect_problem_type_with_agent(target_column: str, non_null_count: int, dtype_text: str, sample_values: list) -> dict:
@@ -245,7 +322,8 @@ def detect_problem_type_with_agent(target_column: str, non_null_count: int, dtyp
         "dtype": dtype_text,
         "sample_values": sample_values[:25],
     }
-    response = client.chat.completions.create(
+    response = _chat_completion_with_retry(
+        client,
         model=settings["deployment"],
         temperature=0,
         max_tokens=180,
@@ -283,7 +361,8 @@ def answer_results_question_with_agent(summary_payload: dict, question: str, his
             messages.append({"role": role, "content": str(content)})
     messages.append({"role": "user", "content": question})
 
-    response = client.chat.completions.create(
+    response = _chat_completion_with_retry(
+        client,
         model=settings["deployment"],
         temperature=0.2,
         max_tokens=500,

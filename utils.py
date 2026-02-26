@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 def save_uploaded_file(uploaded_file, upload_dir="uploads") -> Path:
     """Save a Streamlit uploaded file to disk and return the path."""
     upload_path = Path(upload_dir)
