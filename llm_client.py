@@ -1,75 +1,292 @@
+import json
 import os
+import re
+from functools import lru_cache
+
+from azure.mgmt.cognitiveservices import CognitiveServicesManagementClient
 from openai import AzureOpenAI
 
+from ml_pipeline.client import (
+    DEFAULT_RESOURCE_GROUP,
+    get_ml_client,
+    run_with_tenant_retry,
+)
 
-def get_azure_openai_settings() -> dict[str, str | None]:
-    return {
-        "endpoint": os.environ.get("AZURE_OPENAI_ENDPOINT"),
-        "api_key": os.environ.get("AZURE_OPENAI_API_KEY"),
-        "deployment": os.environ.get("AZURE_OPENAI_DEPLOYMENT"),
-        "api_version": os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01"),
+DEFAULT_OPENAI_ACCOUNT_NAME = "automlagentopenai"
+DEFAULT_OPENAI_DEPLOYMENT_NAME = "automl-gpt"
+DEFAULT_OPENAI_MODEL_NAME = os.environ.get("AZURE_OPENAI_MODEL_NAME", "gpt-5-nano")
+DEFAULT_OPENAI_MODEL_VERSION = os.environ.get("AZURE_OPENAI_MODEL_VERSION", "")
+OPENAI_CANDIDATE_REGIONS = [
+    os.environ.get("AZURE_OPENAI_LOCATION"),
+    "canadacentral",
+    "eastus",
+    "eastus2",
+]
+MODEL_CANDIDATES = [
+    (DEFAULT_OPENAI_MODEL_NAME, DEFAULT_OPENAI_MODEL_VERSION),
+    ("gpt-5-nano", ""),
+    ("gpt-4o-mini", "2024-07-18"),
+    ("gpt-4o-mini", "2024-08-06"),
+    ("gpt-4o", "2024-08-06"),
+    ("gpt-35-turbo", "0125"),
+]
+SKU_CANDIDATES = ["GlobalStandard", "Standard"]
+
+
+def _first_non_empty(values: list[str | None]) -> str | None:
+    for value in values:
+        if value:
+            return value
+    return None
+
+
+def _sanitize_name(value: str, default_value: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9-]", "-", str(value or ""))
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-")
+    if not cleaned:
+        cleaned = default_value
+    return cleaned[:32].lower()
+
+
+def _ensure_openai_account(cog_client, location: str) -> str:
+    base_name = _sanitize_name(
+        os.environ.get("AZURE_OPENAI_ACCOUNT_NAME") or DEFAULT_OPENAI_ACCOUNT_NAME,
+        DEFAULT_OPENAI_ACCOUNT_NAME,
+    )
+    location_suffix = _sanitize_name(location, "region").replace("-", "")
+    account_name = _sanitize_name(f"{base_name}-{location_suffix}", DEFAULT_OPENAI_ACCOUNT_NAME)
+    try:
+        existing = cog_client.accounts.get(DEFAULT_RESOURCE_GROUP, account_name)
+        existing_location = str(getattr(existing, "location", "")).lower()
+        if existing_location == str(location).lower():
+            return account_name
+    except Exception:
+        pass
+
+    # If exact name exists in another region, append short hash-like suffix by region length.
+    if len(account_name) > 24:
+        account_name = account_name[:24]
+    account_name = _sanitize_name(f"{account_name}-{len(location)}", DEFAULT_OPENAI_ACCOUNT_NAME)
+    try:
+        existing = cog_client.accounts.get(DEFAULT_RESOURCE_GROUP, account_name)
+        existing_location = str(getattr(existing, "location", "")).lower()
+        if existing_location == str(location).lower():
+            return account_name
+    except Exception:
+        pass
+
+    try:
+        cog_client.accounts.get(DEFAULT_RESOURCE_GROUP, account_name)
+        return account_name
+    except Exception:
+        pass
+
+    # Create Azure OpenAI account.
+    params = {
+        "location": location,
+        "kind": "OpenAI",
+        "sku": {"name": "S0"},
+        "properties": {
+            "customSubDomainName": account_name,
+            "publicNetworkAccess": "Enabled",
+        },
     }
+    cog_client.accounts.begin_create(DEFAULT_RESOURCE_GROUP, account_name, params).result()
+    return account_name
 
 
-def get_missing_azure_openai_settings() -> list[str]:
-    settings = get_azure_openai_settings()
-    required_settings = {
-        "AZURE_OPENAI_ENDPOINT": settings["endpoint"],
-        "AZURE_OPENAI_API_KEY": settings["api_key"],
-        "AZURE_OPENAI_DEPLOYMENT": settings["deployment"],
-    }
+def _ensure_openai_deployment(cog_client, account_name: str) -> str:
+    deployment_name = _sanitize_name(
+        os.environ.get("AZURE_OPENAI_DEPLOYMENT") or DEFAULT_OPENAI_DEPLOYMENT_NAME,
+        DEFAULT_OPENAI_DEPLOYMENT_NAME,
+    )
 
-    missing = []
-    for name, value in required_settings.items():
-        if not value:
-            missing.append(name)
+    # Try to check existing deployment first (management plane).
+    try:
+        existing = cog_client.deployments.get(DEFAULT_RESOURCE_GROUP, account_name, deployment_name)
+        if existing:
+            return deployment_name
+    except Exception:
+        pass
 
-    return missing
+    # Best-effort deployment creation with model/SKU fallbacks.
+    errors = []
+    for model_name, model_version in MODEL_CANDIDATES:
+        for sku_name in SKU_CANDIDATES:
+            params = {
+                "sku": {"name": sku_name, "capacity": 1},
+                "properties": {
+                    "model": {
+                        "format": "OpenAI",
+                        "name": model_name,
+                    },
+                    "versionUpgradeOption": "NoAutoUpgrade",
+                    "raiPolicyName": "Microsoft.Default",
+                },
+            }
+            if model_version:
+                params["properties"]["model"]["version"] = model_version
+            try:
+                cog_client.deployments.begin_create_or_update(
+                    DEFAULT_RESOURCE_GROUP,
+                    account_name,
+                    deployment_name,
+                    params,
+                ).result()
+                return deployment_name
+            except Exception as error:
+                errors.append(f"{model_name}:{model_version}:{sku_name} -> {error}")
 
-
-def build_automl_system_prompt(
-    *,
-    columns_list,
-) -> str:
-    return (
-        "You are an assistant that helps configure an AutoML job. "
-        "Return ONLY valid JSON with keys: target_column, problem_type, message. "
-        "Use null for unknown values. "
-        "Always ask the user for the problem type if it is missing. "
-        "Allowed problem_type values: Classification or Regression. "
-        f"Available columns: {columns_list}. "
-        "Do not ask the user to choose a metric. Metric is automatic. "
-        "If user asks for unsupported task type, ask them to choose Classification or Regression. "
-        "If the user provides a column not in the list, set target_column to null "
-        "and ask them to choose from the list. "
-        "Ask only one clear follow-up question in message."
+    raise RuntimeError(
+        "Unable to create Azure OpenAI deployment with any supported model/SKU candidate. "
+        + " | ".join(errors[-6:])
     )
 
 
-def chat_completion(messages, temperature=0.2, max_tokens=300) -> str:
-    settings = get_azure_openai_settings()
-    endpoint = settings["endpoint"]
-    api_key = settings["api_key"]
-    deployment = settings["deployment"]
-    api_version = settings["api_version"]
-
-    if not endpoint or not api_key or not deployment:
-        missing = get_missing_azure_openai_settings()
-        raise ValueError(
-            "Missing Azure OpenAI settings: " + ", ".join(missing)
+def _discover_or_create_openai(ml_client) -> dict[str, str]:
+    def _with_cog_retry(operation):
+        return run_with_tenant_retry(
+            ml_client.subscription_id,
+            lambda cred: operation(CognitiveServicesManagementClient(cred, ml_client.subscription_id)),
         )
 
-    client = AzureOpenAI(
-        azure_endpoint=endpoint,
-        api_key=api_key,
-        api_version=api_version,
+    discovery_errors = []
+
+    for region in [value for value in OPENAI_CANDIDATE_REGIONS if value]:
+        try:
+            account_name = _with_cog_retry(lambda client: _ensure_openai_account(client, region))
+            account = _with_cog_retry(
+                lambda client: client.accounts.get(DEFAULT_RESOURCE_GROUP, account_name)
+            )
+            endpoint = getattr(getattr(account, "properties", None), "endpoint", None)
+            keys = _with_cog_retry(
+                lambda client: client.accounts.list_keys(DEFAULT_RESOURCE_GROUP, account_name)
+            )
+            api_key = _first_non_empty([getattr(keys, "key1", None), getattr(keys, "key2", None)])
+            deployment = _with_cog_retry(
+                lambda client: _ensure_openai_deployment(client, account_name)
+            )
+
+            if not endpoint or not api_key or not deployment:
+                raise RuntimeError("Missing endpoint/key/deployment after provisioning.")
+
+            return {
+                "endpoint": endpoint,
+                "api_key": api_key,
+                "deployment": deployment,
+            }
+        except Exception as error:
+            discovery_errors.append(f"{region}: {error}")
+
+    raise RuntimeError(
+        "Could not create/configure Azure OpenAI automatically. "
+        "This usually means model access/quota is not enabled for this subscription. "
+        "Details: " + " | ".join(discovery_errors)
     )
+
+
+@lru_cache(maxsize=8)
+def get_azure_openai_settings() -> dict[str, str]:
+    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2024-02-01")
+
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT")
+    api_key = os.environ.get("AZURE_OPENAI_API_KEY")
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT")
+
+    if endpoint and api_key and deployment:
+        return {
+            "endpoint": endpoint,
+            "api_key": api_key,
+            "deployment": deployment,
+            "api_version": api_version,
+        }
+
+    ml_client = get_ml_client(ensure_resources=False)
+    provisioned = _discover_or_create_openai(ml_client)
+    endpoint = provisioned["endpoint"]
+    api_key = provisioned["api_key"]
+    deployment = provisioned["deployment"]
+
+    return {
+        "endpoint": endpoint,
+        "api_key": api_key,
+        "deployment": deployment,
+        "api_version": api_version,
+    }
+
+
+@lru_cache(maxsize=8)
+def get_azure_openai_client() -> AzureOpenAI:
+    settings = get_azure_openai_settings()
+    return AzureOpenAI(
+        azure_endpoint=settings["endpoint"],
+        api_key=settings["api_key"],
+        api_version=settings["api_version"],
+    )
+
+
+def ensure_azure_openai_ready() -> dict[str, str]:
+    """Force provisioning/discovery and return active settings."""
+    return get_azure_openai_settings()
+
+
+def detect_problem_type_with_agent(target_column: str, non_null_count: int, dtype_text: str, sample_values: list) -> dict:
+    client = get_azure_openai_client()
+    settings = get_azure_openai_settings()
+    prompt = (
+        "You are an ML task classifier. "
+        "Given target column metadata and sample values, return ONLY JSON with keys "
+        "problem_type and reason. "
+        "problem_type must be Classification or Regression."
+    )
+    user_payload = {
+        "target_column": target_column,
+        "non_null_count": non_null_count,
+        "dtype": dtype_text,
+        "sample_values": sample_values[:25],
+    }
+    response = client.chat.completions.create(
+        model=settings["deployment"],
+        temperature=0,
+        max_tokens=180,
+        response_format={"type": "json_object"},
+        messages=[
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": json.dumps(user_payload)},
+        ],
+    )
+    raw = response.choices[0].message.content or "{}"
+    parsed = json.loads(raw)
+    problem_type = parsed.get("problem_type")
+    if problem_type not in ("Classification", "Regression"):
+        raise RuntimeError("Agent returned invalid problem_type.")
+    reason = str(parsed.get("reason", "")).strip() or "No reason returned by agent."
+    return {"problem_type": problem_type, "reason": reason, "source": "agent"}
+
+
+def answer_results_question_with_agent(summary_payload: dict, question: str, history: list[dict] | None = None) -> str:
+    client = get_azure_openai_client()
+    settings = get_azure_openai_settings()
+    history = history or []
+    system_prompt = (
+        "You are an AutoML assistant. Answer user questions about the experiment details. "
+        "Be concrete and reference metrics/models in the provided context. "
+        "If confusion_matrix or feature_importance are present in context, use them directly. "
+        "If information is missing, say exactly what key is missing."
+    )
+    messages = [{"role": "system", "content": system_prompt}]
+    messages.append({"role": "user", "content": f"Experiment context: {json.dumps(summary_payload)}"})
+    for item in history[-6:]:
+        role = item.get("role")
+        content = item.get("content")
+        if role in ("user", "assistant") and content:
+            messages.append({"role": role, "content": str(content)})
+    messages.append({"role": "user", "content": question})
 
     response = client.chat.completions.create(
-        model=deployment,
+        model=settings["deployment"],
+        temperature=0.2,
+        max_tokens=500,
         messages=messages,
-        temperature=temperature,
-        max_tokens=max_tokens,
     )
-
-    return response.choices[0].message.content
+    return (response.choices[0].message.content or "").strip()
