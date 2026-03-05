@@ -22,8 +22,7 @@ def _resolve_subscription_id(subscription_id: str | None) -> str:
         return env_subscription_id
 
     raise RuntimeError(
-        "Subscription ID not provided. Set AZURE_SUBSCRIPTION_ID environment variable. "
-        "See SETUP.md for instructions."
+        "Subscription ID not provided. Set AZURE_SUBSCRIPTION_ID environment variable."
     )
 
 

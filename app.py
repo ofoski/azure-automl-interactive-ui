@@ -8,7 +8,6 @@ This app guides you through training an AutoML model:
 4. Run AutoML
 5. View best model results
 
-For setup instructions, see SETUP.md
 """
 
 import pandas as pd
