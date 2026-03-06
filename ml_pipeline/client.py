@@ -7,9 +7,10 @@ from azure.ai.ml import MLClient
 from azure.identity import DefaultAzureCredential
 
 @lru_cache(maxsize=64)
-def _create_credential():
+def _create_credential(tenant_id: str | None):
     return DefaultAzureCredential(
         exclude_interactive_browser_credential=False,
+        interactive_browser_tenant_id=tenant_id,
     )
 
 
@@ -26,7 +27,6 @@ def _resolve_subscription_id(subscription_id: str | None) -> str:
     )
 
 
-@lru_cache(maxsize=16)
 def get_ml_client(
     subscription_id: str | None = None,
     resource_group: str | None = None,
@@ -36,9 +36,10 @@ def get_ml_client(
     resolved_subscription_id = _resolve_subscription_id(subscription_id)
     resolved_resource_group = resource_group or os.environ.get("AZURE_RESOURCE_GROUP", "automl-demo-rg")
     resolved_workspace_name = workspace_name or os.environ.get("AZURE_WORKSPACE_NAME", "automl-demo-ws")
+    resolved_tenant_id = os.environ.get("AZURE_TENANT_ID")
 
     return MLClient(
-        credential=_create_credential(),
+        credential=_create_credential(resolved_tenant_id),
         subscription_id=resolved_subscription_id,
         resource_group_name=resolved_resource_group,
         workspace_name=resolved_workspace_name,

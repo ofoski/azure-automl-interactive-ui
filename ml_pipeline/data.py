@@ -28,9 +28,11 @@ def register_training_data(ml_client, local_csv_path: str, name: str = "training
     )
     mltable_file.write_text(mltable_content, encoding="utf-8")
 
+    safe_name = (name or "training-data").strip().replace(" ", "-")
+
     data = Data(
         path=str(mltable_dir),
         type=AssetTypes.MLTABLE,
-        name=name,
+        name=safe_name,
     )
     return ml_client.data.create_or_update(data)

@@ -14,12 +14,12 @@ import pandas as pd
 import streamlit as st
 import logging
 
-from get_best_model import get_best_model_details
+from ml_pipeline import get_ml_client
+from register_model import register_best_model
 from run_automl import (
     DEFAULT_VM_SIZE,
     detect_problem_type,
     get_primary_metric,
-    register_best_model,
     submit_automl_job,
 )
 from utils import save_uploaded_file
@@ -34,7 +34,6 @@ st.set_page_config(page_title="Azure AutoML Demo", layout="wide", initial_sideba
 st.title("🤖 Azure AutoML Trainer")
 st.caption("Upload CSV, select target, run AutoML, inspect best model.")
 
-# Define terminal statuses for checking if job is complete
 TERMINAL_STATUSES = {"Completed", "Failed", "Canceled", "Cancelled"}
 
 # ============================================================
@@ -166,60 +165,38 @@ if latest_job_name:
     with col2:
         if st.button("🔄 Refresh", use_container_width=True):
             st.rerun()
-    
+
     try:
-        # Fetch job details
-        details = get_best_model_details(latest_job_name)
-        
-        status = details.get("status", "Unknown")
-        primary_metric_name = details.get("primary_metric", "N/A")
-        best_model = details.get("best_model")
-
-        if best_model and status in TERMINAL_STATUSES:
-            best_model = register_best_model(latest_job_name, best_model)
-        
-        # Display job status
-        st.subheader("Job Status")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            status_icon = "✅" if status in TERMINAL_STATUSES else "⏳"
-            st.metric("Status", f"{status_icon} {status}")
-        with col2:
-            st.metric("Primary Metric", primary_metric_name.title())
-        with col3:
-            if best_model and isinstance(best_model.get("score"), (int, float)):
-                st.metric("Best Score", f"{best_model['score']:.4f}")
-            else:
-                st.metric("Best Score", "N/A")
-        
-        # Display best model details
-        if best_model:
-            st.subheader("🥇 Best Model Details")
-            
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric("Algorithm", best_model.get("algorithm") or "N/A")
-            with col2:
-                st.metric("Model Name", (best_model.get("model_name") or "N/A")[:30])
-            with col3:
-                st.metric("Run ID", (best_model.get("run_id") or "N/A")[:15])
-            with col4:
-                score = best_model.get("score")
-                score_str = f"{score:.4f}" if isinstance(score, (int, float)) else "N/A"
-                st.metric(primary_metric_name.title(), score_str)
-
-            registered_name = best_model.get("registered_model_name") or "N/A"
-            registered_version = best_model.get("registered_model_version") or "N/A"
-            st.caption(f"Registered model: `{registered_name}` (v{registered_version})")
-            
-            st.subheader("📈 Used Metric")
-            st.metric(primary_metric_name.title(), score_str)
-        
-        # Status info
-        if status not in TERMINAL_STATUSES:
-            st.info(f"Training in progress: {status}. Click Refresh.")
-    
+        job = get_ml_client().jobs.get(latest_job_name)
+        status = getattr(job, "status", "Unknown")
     except Exception as error:
-        st.warning(f"⚠️ Could not fetch job details: {str(error)}")
-        st.caption("Job may still be initializing. Click Refresh.")
+        st.warning(f"⚠️ Could not fetch job status: {error}")
+        st.stop()
+
+    st.subheader("Job Status")
+    status_icon = "✅" if status in TERMINAL_STATUSES else "⏳"
+    st.metric("Status", f"{status_icon} {status}")
+
+    registration_key = f"registered_model:{latest_job_name}"
+    if status == "Completed" and not st.session_state.get(registration_key):
+        try:
+            st.session_state[registration_key] = register_best_model(latest_job_name)
+        except Exception as error:
+            st.warning(f"⚠️ Model registration failed: {error}")
+
+    registration = st.session_state.get(registration_key)
+    if registration:
+        st.success(
+            "Registered model: "
+            f"`{registration.get('registered_model_name', 'N/A')}` "
+            f"(v{registration.get('registered_model_version', 'N/A')})"
+        )
+        st.caption(
+            f"Best run: `{registration.get('run_id', 'N/A')}`, "
+            f"score: `{registration.get('score', 'N/A')}`"
+        )
+
+    if status not in TERMINAL_STATUSES:
+        st.info("Training is still running. Click Refresh.")
+    elif status in {"Failed", "Canceled", "Cancelled"}:
+        st.warning(f"Job finished with status: {status}")
