@@ -90,25 +90,25 @@ if target_column:
     
     st.info(f"**Reason:** {reason}")
     
-    # Show training configuration
-    st.subheader("Training Configuration")
-    config_df = pd.DataFrame({
-        "Setting": [
-            "Target Column",
-            "Problem Type",
-            "Primary Metric",
-            "Compute (VM Size)",
-            "Columns (Features)",
-        ],
-        "Value": [
-            target_column,
-            problem_type,
-            primary_metric,
-            DEFAULT_VM_SIZE,
-            df.shape[1] - 1,  # excluding target
+    # Show training configuration in a preview-style table.
+    st.subheader("Training Configuration Preview")
+    config_preview = pd.DataFrame(
+        [
+            {
+                "File": uploaded_file.name,
+                "Rows": int(df.shape[0]),
+                "Columns": int(df.shape[1]),
+                "Target Column": target_column,
+                "Task Type": problem_type,
+                "Primary Metric": primary_metric,
+                "Compute (VM Size)": DEFAULT_VM_SIZE,
+                "Feature Count": int(df.shape[1] - 1),
+            }
         ]
-    })
-    st.dataframe(config_df, use_container_width=True, hide_index=True)
+    )
+    st.dataframe(config_preview, use_container_width=True, hide_index=True)
+
+    # Keep a single configuration preview table to avoid duplicate UI sections.
     
 # ============================================================
 # SECTION 3: SUBMIT AUTOML JOB
@@ -186,14 +186,20 @@ if latest_job_name:
 
     registration = st.session_state.get(registration_key)
     if registration:
+        run_id = registration.get("run_id") or "N/A"
+        score = registration.get("score")
+        score_display = "N/A" if score is None else score
+        source_path = registration.get("source_path") or "N/A"
+
         st.success(
             "Registered model: "
             f"`{registration.get('registered_model_name', 'N/A')}` "
             f"(v{registration.get('registered_model_version', 'N/A')})"
         )
         st.caption(
-            f"Best run: `{registration.get('run_id', 'N/A')}`, "
-            f"score: `{registration.get('score', 'N/A')}`"
+            f"Best run: `{run_id}`, "
+            f"score: `{score_display}`, "
+            f"source: `{source_path}`"
         )
 
     if status not in TERMINAL_STATUSES:

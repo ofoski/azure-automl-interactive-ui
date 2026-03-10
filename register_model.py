@@ -9,34 +9,32 @@ def register_best_model(
     job_name: str,
     subscription_id: str | None = None,
 ) -> dict:
-    """Register best-scoring child run model artifact."""
+    """Register best model from a completed AutoML parent job."""
     ml_client = get_ml_client(subscription_id=subscription_id)
 
-    children = list(ml_client.jobs.list(parent_job_name=job_name, max_results=100))
-    best_score = None
-    best_child_run_id = None
+    parent_job = ml_client.jobs.get(job_name)
+    tags = getattr(parent_job, "tags", {}) or {}
 
-    for child in children:
-        props = getattr(child, "properties", {}) or {}
-        score_val = props.get("score")
-        if score_val is None:
-            continue
-        try:
-            score = float(score_val)
-        except (TypeError, ValueError):
-            continue
-
-        if best_score is None or score > best_score:
-            best_score = score
-            best_child_run_id = getattr(child, "name", None)
-
+    # AutoML parent exposes the selected best child run here.
+    best_child_run_id = tags.get("automl_best_child_run_id")
     if not best_child_run_id:
-        raise ValueError(f"No best child run score found for job {job_name}")
+        raise ValueError(
+            f"AutoML best child run id not found for parent job '{job_name}'."
+        )
 
-    registered_name = f"best-model-{job_name}"[:255]
+    best_score = None
+    children = ml_client.jobs.list(parent_job_name=job_name, max_results=200)
+    for child in children:
+        if getattr(child, "name", None) == best_child_run_id:
+            child_props = getattr(child, "properties", {}) or {}
+            best_score = child_props.get("score")
+            break
+
+    registered_name = f"best-model-{best_child_run_id}"
+    source_path = f"azureml://jobs/{job_name}/outputs/best_model"
     model = Model(
         name=registered_name,
-        path=f"runs:/{best_child_run_id}/outputs/model.pkl",
+        path=source_path,
         type="custom_model",
         description=f"Best model from {job_name}",
     )
@@ -50,4 +48,5 @@ def register_best_model(
         "registered_model_name": created_name,
         "registered_model_version": created_version,
         "model_id": f"azureml:{created_name}:{created_version}",
+        "source_path": source_path,
     }
