@@ -27,7 +27,7 @@ def run_automl_job(
     if problem_type not in ("Classification", "Regression"):
         raise ValueError(f"Invalid problem_type: {problem_type}")
 
-    training_data_input = Input(type="mltable", path=training_data)
+    training_data_input = Input(path=training_data, type="mltable")
 
     if problem_type == "Classification":
         job = automl.classification(
@@ -44,8 +44,11 @@ def run_automl_job(
             experiment_name=DEFAULT_EXPERIMENT_NAME,
         )
 
+    # For this SDK version, ensemble flags must be applied via set_training().
+    job.set_training(enable_stack_ensemble=False, enable_vote_ensemble=False)
+
     if vm_size:
-        job.resources = JobResourceConfiguration(instance_type=vm_size)
+        job.resources = JobResourceConfiguration(instance_count=1, instance_type=vm_size)
 
     # Set a stable parent job name and use it across the app.
     parent_job_name = f"automl-{uuid4().hex[:16]}"

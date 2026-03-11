@@ -6,8 +6,16 @@ Simple Streamlit app for Azure AutoML.
 - Upload a CSV file
 - Select the target column
 - Auto-detect classification or regression
-- Submit an Azure AutoML job
+- Split uploaded data into train/test (80/20)
+- Save both splits as Azure ML MLTable Data Assets
+- Submit an Azure AutoML job using the train split
 - Show the best model and metric
+
+## Data Processing Workflow
+- The uploaded CSV is split into 80% train and 20% test.
+- Both train and test are converted to MLTable format and registered as Data Assets.
+- AutoML training uses only the train Data Asset.
+- The test Data Asset is saved for later evaluation and analysis in notebook or Python scripts.
 
 ## Run
 ```bash

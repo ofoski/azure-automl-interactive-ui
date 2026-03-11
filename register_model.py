@@ -32,6 +32,26 @@ def register_best_model(
 
     registered_name = f"best-model-{best_child_run_id}"
     source_path = f"azureml://jobs/{job_name}/outputs/best_model"
+
+    # If already registered, return existing model info without re-registering.
+    try:
+        existing = next(ml_client.models.list(name=registered_name), None)
+    except Exception:
+        existing = None
+
+    if existing is not None:
+        existing_name = getattr(existing, "name", registered_name)
+        existing_version = str(getattr(existing, "version", "1"))
+        return {
+            "run_id": best_child_run_id,
+            "score": best_score,
+            "registered_model_name": existing_name,
+            "registered_model_version": existing_version,
+            "model_id": f"azureml:{existing_name}:{existing_version}",
+            "source_path": source_path,
+            "already_registered": True,
+        }
+
     model = Model(
         name=registered_name,
         path=source_path,
@@ -49,4 +69,5 @@ def register_best_model(
         "registered_model_version": created_version,
         "model_id": f"azureml:{created_name}:{created_version}",
         "source_path": source_path,
+        "already_registered": False,
     }
