@@ -2,7 +2,8 @@
 
 import pandas as pd
 
-from ml_pipeline import get_ml_client, register_training_data, run_automl_job
+from ml_pipeline import get_ml_client, run_automl_job
+from ml_pipeline.data import register_train_test_data
 
 DEFAULT_VM_SIZE = "Standard_DS11_v2"
 
@@ -47,19 +48,28 @@ def submit_automl_job(
     csv_path: str,
     target_column: str,
     problem_type: str,
-    data_name: str = "training-data",
+    data_name: str | None = None,
     vm_size: str = DEFAULT_VM_SIZE,
     subscription_id: str | None = None,
 ) -> str:
     ml_client = _ml_client(subscription_id)
-    data_asset = register_training_data(ml_client, csv_path, name=data_name)
-    return run_automl_job(
+    train_data_id = register_train_test_data(
+        ml_client=ml_client,
+        local_csv_path=csv_path,
+        target_column=target_column,
+        problem_type=problem_type,
+        name=data_name,
+    )
+
+    job_name = run_automl_job(
         ml_client=ml_client,
         problem_type=problem_type,
-        training_data=data_asset.id,
+        training_data=train_data_id,
         target_column=target_column,
         primary_metric=get_primary_metric(problem_type),
         vm_size=vm_size,
     )
+
+    return job_name
 
 

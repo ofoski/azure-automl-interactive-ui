@@ -46,6 +46,10 @@ def run_automl_job(
 
     # For this SDK version, ensemble flags must be applied via set_training().
     job.set_training(enable_stack_ensemble=False, enable_vote_ensemble=False)
+    job.set_featurization(
+        mode="auto",
+        blocked_transformers=["TfIdf", "CountVectorizer", "WordEmbedding", "TextTargetEncoder"],
+    )
 
     if vm_size:
         job.resources = JobResourceConfiguration(instance_count=1, instance_type=vm_size)
