@@ -8,8 +8,9 @@ from sklearn.model_selection import train_test_split
 from azure.ai.ml.constants import AssetTypes
 from azure.ai.ml.entities import Data
 
-_MAX_TEXT_UNIQUES = 50
-_MIN_TEXT_WORDS = 3
+_MAX_TEXT_UNIQUE_RATIO = 0.06
+_LONG_TEXT_WORD_THRESHOLD = 3
+_MIN_LONG_TEXT_RATIO = 0.35
 _ID_UNIQUE_RATIO = 0.98
 
 
@@ -24,16 +25,21 @@ def _prepare_automl_dataframe(df: pd.DataFrame, target_column: str) -> pd.DataFr
         if series.empty:
             continue
 
+        row_count = int(series.shape[0])
         unique_count = int(series.nunique())
         if unique_count <= 1:
             continue
 
-        if unique_count / len(series) >= _ID_UNIQUE_RATIO:
+        unique_ratio = unique_count / row_count
+        if unique_ratio >= _ID_UNIQUE_RATIO:
             continue
 
         if pd.api.types.is_object_dtype(series) or pd.api.types.is_string_dtype(series):
-            avg_words = series.astype(str).str.split().str.len().mean()
-            if unique_count > _MAX_TEXT_UNIQUES or avg_words >= _MIN_TEXT_WORDS:
+            max_text_uniques = max(2, int(row_count * _MAX_TEXT_UNIQUE_RATIO))
+            word_counts = series.astype(str).str.split().str.len()
+            long_text_ratio = float((word_counts >= _LONG_TEXT_WORD_THRESHOLD).mean())
+
+            if unique_count > max_text_uniques or long_text_ratio >= _MIN_LONG_TEXT_RATIO:
                 continue
 
         keep_columns.append(column)

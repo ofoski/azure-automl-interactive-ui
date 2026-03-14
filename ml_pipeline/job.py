@@ -5,7 +5,7 @@ from uuid import uuid4
 from azure.ai.ml import Input, automl
 from azure.ai.ml.entities import JobResourceConfiguration
 
-DEFAULT_MAX_TRIALS = 4
+DEFAULT_MAX_TRIALS = 2
 DEFAULT_TRIAL_TIMEOUT_MINUTES = 5
 DEFAULT_TIMEOUT_MINUTES = 15
 DEFAULT_EXPERIMENT_NAME = "streamlit-automl-demo"
@@ -35,6 +35,7 @@ def run_automl_job(
             target_column_name=target_column,
             primary_metric=primary_metric,
             experiment_name=DEFAULT_EXPERIMENT_NAME,
+            enable_model_explainability=True
         )
     else:
         job = automl.regression(
@@ -42,14 +43,12 @@ def run_automl_job(
             target_column_name=target_column,
             primary_metric=primary_metric,
             experiment_name=DEFAULT_EXPERIMENT_NAME,
+            enable_model_explainability=True
         )
 
     # For this SDK version, ensemble flags must be applied via set_training().
     job.set_training(enable_stack_ensemble=False, enable_vote_ensemble=False)
-    job.set_featurization(
-        mode="auto",
-        blocked_transformers=["TfIdf", "CountVectorizer", "WordEmbedding", "TextTargetEncoder"],
-    )
+    job.set_featurization(mode="auto")
 
     if vm_size:
         job.resources = JobResourceConfiguration(instance_count=1, instance_type=vm_size)
@@ -62,6 +61,7 @@ def run_automl_job(
         timeout_minutes=int(timeout_minutes),
         trial_timeout_minutes=int(trial_timeout_minutes),
         max_trials=int(max_trials),
+        enable_early_termination=True
     )
 
     ml_client.jobs.create_or_update(job)
