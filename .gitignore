@@ -1,5 +1,7 @@
-# Virtual Environment
+# Virtual Environments
 .venv/
+.venv_model310/
+.venv_artifact/
 venv/
 
 # Temporary uploads folder
@@ -42,3 +44,8 @@ wheels/
 # Environment variables
 .env
 .env.local
+
+# Model artifacts / downloaded outputs (large binary files)
+model_artifacts/
+notebook_artifacts/
+uploads/
