@@ -279,14 +279,6 @@ with st.expander("Model & data", expanded=True):
             placeholder="e.g. titanic",
         )
 
-    # Deployment name — shown outside columns so it's always visible
-    _deployment = st.text_input(
-        "Azure OpenAI deployment name",
-        value=os.environ.get("AZURE_OPENAI_DEPLOYMENT", ""),
-        key="rai_deployment",
-        placeholder="e.g. gpt-4o-mini  (the name you gave your deployment in Azure AI Foundry)",
-    )
-
 _ready = bool(_model_name and _target_col and _data_asset)
 
 if not _ready:
@@ -347,7 +339,6 @@ else:
                 openai_endpoint=_ai_endpoint,
                 api_key=_ai_api_key,
                 chat_history=st.session_state.get("rai_chat", []),
-                deployment=st.session_state.get("rai_deployment", ""),
             )
 
         if "rai_chat" not in st.session_state:

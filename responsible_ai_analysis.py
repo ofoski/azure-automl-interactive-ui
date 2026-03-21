@@ -79,14 +79,14 @@ def run_permutation_importance(
 
 
 def fill_missing_values(X: pd.DataFrame) -> pd.DataFrame:
-    """Fill missing values: median for continuous, mode for categorical/low-cardinality."""
+    """Fill missing values and encode object/bool columns to float."""
     X = X.copy()
     for col in X.columns:
-        if X[col].isna().any():
-            if X[col].dtype == "object" or X[col].nunique() <= 10:
-                X[col] = X[col].fillna(X[col].mode()[0])
-            else:
-                X[col] = X[col].fillna(X[col].median())
+        if X[col].dtype == "object" or X[col].dtype == "bool":
+            X[col] = X[col].fillna(X[col].mode()[0])
+            X[col] = pd.factorize(X[col])[0].astype(float)
+        else:
+            X[col] = X[col].fillna(X[col].median())
     return X
 
 
@@ -215,99 +215,13 @@ def infer_train_asset_name(test_asset_name: str) -> str:
         return f"{test_asset_name[:-5]}-train"
     raise ValueError("Could not infer train asset name. Set TRAIN_ASSET explicitly.")
 
-if __name__ == "__main__":
-    # If you have an AutoML job name, this will fetch registered model name/version from register_model.py
-    JOB_NAME = os.environ.get("RA_JOB_NAME") or None  # e.g. "automl-job-xxxx"
 
-    # Or set exact registered model values directly.
-    MODEL_NAME = os.environ.get("RA_MODEL_NAME", "best-model-automl-b666b781bd0242b4_0")
-    MODEL_VERSION = os.environ.get("RA_MODEL_VERSION", "1")
-    TEST_ASSET = os.environ.get("RA_TEST_ASSET", "california_housing-test")
-    TRAIN_ASSET = infer_train_asset_name(TEST_ASSET)
-    TARGET_COLUMN = os.environ.get("RA_TARGET_COLUMN", "median_house_value")
-
-    if JOB_NAME:
-        print(f"RA_JOB_NAME is set ({JOB_NAME}); overriding MODEL_NAME/MODEL_VERSION from job registration.")
-        reg = register_best_model(JOB_NAME)
-        MODEL_NAME = reg["registered_model_name"]
-        MODEL_VERSION = reg["registered_model_version"]
-
-    print("\nEffective runtime config:")
-    print("MODEL_NAME:", MODEL_NAME)
-    print("MODEL_VERSION:", MODEL_VERSION)
-    print("TEST_ASSET:", TEST_ASSET)
-    print("TRAIN_ASSET:", TRAIN_ASSET)
-    print("TARGET_COLUMN:", TARGET_COLUMN)
-
-    # load_test_data — check asset loads correctly
-    df = load_test_data(TEST_ASSET)
-    if TARGET_COLUMN not in df.columns:
-        raise ValueError(f"Target column '{TARGET_COLUMN}' not found in test asset '{TEST_ASSET}'.")
-    print("Test data shape:", df.shape)
-    print(df.head())
-
-    # load_model — check model downloads and deserialises
-    model = load_model(MODEL_NAME, MODEL_VERSION)
-    print("Model type:", type(model))
-
-    X_test, y_test = df.drop(columns=[TARGET_COLUMN]), df[TARGET_COLUMN]
-    train_df = load_test_data(TRAIN_ASSET)
-    if TARGET_COLUMN not in train_df.columns:
-        raise ValueError(f"Target column '{TARGET_COLUMN}' not found in train asset '{TRAIN_ASSET}'.")
-    X_train, y_train = train_df.drop(columns=[TARGET_COLUMN]), train_df[TARGET_COLUMN]
-    task_info = detect_problem_type(df, TARGET_COLUMN)
-    task_type = task_info["problem_type"].lower()
-
-    # run_permutation_importance — full end-to-end
-    importance_df = run_permutation_importance(
-        model_name=MODEL_NAME,
-        test_asset_name=TEST_ASSET,
-        target_column=TARGET_COLUMN,
-        model_version=MODEL_VERSION,
+def build_data_context(X_test: pd.DataFrame, y_test, target_column: str) -> str:
+    """Build a statistical summary of the test dataset for the LLM system prompt."""
+    df = X_test.copy()
+    df[target_column] = y_test.values
+    return (
+        f"Dataset statistics:\n{df.describe(include='all').round(2).to_string()}\n\n"
+        f"Target column: {target_column}\n"
+        f"Test set size: {len(X_test)} rows\n"
     )
-    print(importance_df)
-
-    print("\nError analysis:")
-    error_results = error_analysis(model, X_test, y_test, task_type=task_type)
-    for feature, errors in error_results.items():
-        print(f"\n--- {feature} ---")
-        print(errors)
-    
-    # Counterfactuals
-    print("\nCounterfactuals:")
-    cf = run_counterfactuals(
-        model=model,
-        X_train=X_train,
-        y_train=y_train,
-        X_test=X_test,
-        y_test=y_test,
-        task_type=task_type,
-        target_column=TARGET_COLUMN,
-        instance_index=0,
-        desired_class="opposite" if task_type == "classification" else None,
-        total_cfs=5,         # ← request 5 counterfactuals
-    )
-
-    cf_example = cf.cf_examples_list[0]
-    generated_count = 0 if cf_example.final_cfs_df is None else len(cf_example.final_cfs_df)
-    print(f"Requested 5 counterfactuals, generated {generated_count}.")
-    print("Original instance:")
-    print(cf_example.test_instance_df)
-
-    print("\nGenerated counterfactuals:")
-    if cf_example.final_cfs_df is None or cf_example.final_cfs_df.empty:
-        print("No counterfactuals were generated.")
-    else:
-        print(cf_example.final_cfs_df)  # ← already contains all 5 rows
-
-    # Fairness analysis
-    print("\nFairness analysis:")
-    fairness_results = fairness_analysis(
-        model=model,
-        X_test=X_test,
-        y_test=y_test,
-        task_type=task_type,
-    )
-    for feature, metrics_df in fairness_results.items():
-        print(f"\n--- {feature} ---")
-        print(metrics_df.to_string())

@@ -20,53 +20,64 @@ import os
 from openai import AzureOpenAI
 
 from responsible_ai_analysis import (
+    build_data_context,
     error_analysis,
     fairness_analysis,
     run_counterfactuals,
     run_permutation_importance,
 )
 
-MODEL = "gpt-5-nano"  # fallback — overridden by the deployment parameter or AZURE_OPENAI_DEPLOYMENT env var
-API_VERSION = "2024-12-01-preview"
-
 SYSTEM_PROMPT = (
     "You are a Responsible AI assistant for machine learning models trained with Azure AutoML.\n"
     "You have access to four analysis tools. Call the appropriate tool(s) based on the user "
     "question, then explain the results in plain language for a non-technical stakeholder.\n\n"
 
-    "TASK CONTEXT:\n"
-    "- This model was trained with Azure AutoML.\n"
-    "- The task type is either classification (predicting a category) or "
-    "regression (predicting a number).\n"
-    "- Interpret all metrics accordingly — for classification focus on accuracy "
-    "and rates, for regression focus on error magnitude.\n\n"
+    "DATA CONTEXT:\n"
+    "{data_context}\n\n"
+
+    "DOMAIN CONTEXT:\n"
+    "{domain_context}\n\n"
+
+    "DATA UNDERSTANDING INSTRUCTIONS:\n"
+    "Analyze the data context above and reason about:\n"
+    "- What domain this dataset likely belongs to based on column names and value ranges\n"
+    "- What the target column represents and what predicting it means in the real world\n"
+    "- Which features are sensitive from a fairness perspective based on their names and distributions\n"
+    "- Which features are actionable based on their nature and value ranges\n"
+    "- What constitutes a large vs small error based on the target distribution\n"
+    "- What value ranges are realistic for counterfactual changes based on min/max/mean/std\n"
+    "Use this understanding to give domain-aware, specific, and meaningful answers.\n"
+    "Ground all recommendations in the actual data statistics — "
+    "do not suggest changes outside the realistic range of the data.\n\n"
 
     "TOOL GUIDANCE:\n"
     "- get_permutation_importance: returns features ranked by importance_mean. "
     "Higher = more influential. Values near 0 or negative mean negligible impact — "
-    "describe these as not contributing, not hurting.\n"
+    "describe these as not contributing, not hurting the model.\n"
     "- get_error_analysis: returns mean error per group or bin. "
     "Focus on features with large gaps between best and worst group. "
     "If a group has very few samples, note that its error rate may be unreliable.\n"
-    "- get_fairness_analysis: returns metrics per group plus a gap score. "
+    "- get_fairness_analysis: returns performance metrics per group plus a gap score. "
     "For regression: MAE per group. "
     "For classification: accuracy, selection_rate, true_positive_rate per group. "
     "Gap above 0.1 for classification or above 20 percent of mean MAE for regression "
     "is a fairness concern. Always mention which group has the highest gap.\n"
     "- get_counterfactuals: returns minimal feature changes that would alter the prediction. "
-    "Explain each change in plain terms such as increasing fare from 7.25 to 55.30. "
-    "Always separate actionable vs non-actionable changes.\n\n"
+    "Explain each change in plain terms such as increasing income from 30,000 to 45,000. "
+    "Always separate actionable vs non-actionable changes in your explanation.\n\n"
 
     "TOOL CALLING STRATEGY:\n"
     "- For broad questions about model quality or full reports: "
     "call all four tools and synthesize findings into a cohesive summary.\n"
+    "- For questions about worst performing group: call both get_error_analysis "
+    "and get_fairness_analysis and combine the results.\n"
     "- For specific questions: call only the relevant tool.\n"
-    "- If the user asks a question similar to a previous one, summarize briefly "
+    "- If the user asks a question similar to a previous one: summarize briefly "
     "and refer back rather than repeating the full answer.\n\n"
 
     "ACTIONABILITY AND FEATURE REASONING:\n"
     "Before presenting any counterfactual change, reason about whether that change "
-    "is realistically possible for a person to make.\n\n"
+    "is realistically possible based on the data statistics and real world context.\n\n"
 
     "Features that are generally NOT actionable:\n"
     "- Immutable biological characteristics a person is born with\n"
@@ -74,12 +85,12 @@ SYSTEM_PROMPT = (
     "- High cardinality identifier columns such as ID, ticket number, name — "
     "these are unique per row and carry no predictive meaning\n"
     "- Geographic coordinates such as latitude and longitude\n"
-    "- Timestamps and dates of past events that cannot be changed\n\n"
+    "- Timestamps and dates of past events\n\n"
 
     "Features that are generally actionable:\n"
-    "- Financial attributes such as income, fare, price paid\n"
-    "- Choice-based attributes such as class, location chosen, port of embarkation\n"
-    "- Behavioral attributes such as spending, usage, frequency\n"
+    "- Financial attributes such as income, savings, payments\n"
+    "- Choice-based attributes such as product type, subscription, plan\n"
+    "- Behavioral attributes such as spending, usage, activity frequency\n"
     "- Attributes that represent decisions a person can consciously make\n\n"
 
     "Borderline features:\n"
@@ -95,13 +106,14 @@ SYSTEM_PROMPT = (
     "- Always call a tool before answering questions about model behaviour.\n"
     "- Summarise numerical results — do not paste raw tables.\n"
     "- Highlight the most important finding first.\n"
-    "- For error analysis: note unreliable results when a group has very few samples.\n"
+    "- For error analysis: note when a group has very few samples as results may be unreliable.\n"
     "- For counterfactuals: always end with practical recommendations using only "
-    "actionable features. If no actionable changes exist, explicitly tell the user "
-    "that no practical recommendations can be made.\n"
+    "actionable features. If no actionable changes exist, explicitly tell the user.\n"
     "- For fairness: use measured language — say the model shows a performance gap "
     "rather than the model is biased. Avoid definitive causal claims — say "
     "associated with rather than caused by.\n"
+    "- When making recommendations: ground them in the data statistics and domain context. "
+    "Avoid generic statements — be specific about what the data suggests.\n"
     "- Only use information returned by tools — do not guess or invent values.\n"
 )
 
@@ -195,11 +207,43 @@ def run_agent(
     """
     endpoint   = openai_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT", "")
     key        = api_key         or os.environ.get("AZURE_OPENAI_API_KEY", "")
-    model_name = deployment      or os.environ.get("AZURE_OPENAI_DEPLOYMENT", MODEL)
-    if not endpoint or not key:
+    model_name = deployment      or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
+
+    # Validate — catch the most common mis-configuration mistakes up front
+    if not endpoint:
         return (
-            "Azure OpenAI endpoint or API key is missing. "
-            "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY environment variables."
+            "\u274c **AZURE_OPENAI_ENDPOINT is not set.**\n\n"
+            "Set it in PowerShell before starting the app:\n"
+            "```powershell\n"
+            "$env:AZURE_OPENAI_ENDPOINT = 'https://<resource-name>.openai.azure.com/'\n"
+            "```"
+        )
+    if not key:
+        return (
+            "\u274c **AZURE_OPENAI_API_KEY is not set.**\n\n"
+            "Set it in PowerShell before starting the app:\n"
+            "```powershell\n"
+            "$env:AZURE_OPENAI_API_KEY = '<your-api-key>'\n"
+            "```"
+        )
+    if "services.ai.azure.com" in endpoint or "/api/projects/" in endpoint:
+        return (
+            "\u274c **Wrong endpoint.**\n\n"
+            "You set the **Foundry project URL** as the endpoint, but the agent needs the "
+            "**Azure OpenAI endpoint** (ends in `.openai.azure.com/`).\n\n"
+            "Find the correct value in **AI Foundry \u2192 your project \u2192 Overview \u2192 Azure OpenAI endpoint**, "
+            "then update the env var:\n"
+            "```powershell\n"
+            "$env:AZURE_OPENAI_ENDPOINT = 'https://<resource-name>.openai.azure.com/'\n"
+            "```"
+        )
+    if not model_name:
+        return (
+            "\u274c **AZURE_OPENAI_DEPLOYMENT is not set.**\n\n"
+            "Set it to the deployment name you created in AI Foundry:\n"
+            "```powershell\n"
+            "$env:AZURE_OPENAI_DEPLOYMENT = 'gpt-4o-mini'\n"
+            "```"
         )
 
     # ------------------------------------------------------------------
@@ -299,11 +343,24 @@ def run_agent(
         client = AzureOpenAI(
             azure_endpoint=endpoint,
             api_key=key,
-            api_version=API_VERSION,
+            api_version=os.environ.get("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
         )
 
-        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        for turn in (chat_history or [])[-10:]:
+        data_context = build_data_context(
+            context["X_test"], context["y_test"], context["target_column"]
+        )
+        domain_context = (
+            f"Model: {context['model_name']} v{context['model_version']}\n"
+            f"Task type: {context['task_type']}\n"
+            f"Target column: {context['target_column']}\n"
+        )
+        system_prompt = SYSTEM_PROMPT.format(
+            data_context=data_context,
+            domain_context=domain_context,
+        )
+
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        for turn in (chat_history or [])[-6:]:
             messages.append({"role": turn["role"], "content": turn["content"]})
         messages.append({"role": "user", "content": user_message})
 
@@ -328,6 +385,15 @@ def run_agent(
         return "Agent reached max tool-call rounds. Try rephrasing your question."
 
     except Exception as exc:
+        err = str(exc)
+        if "Connection error" in err or "ConnectionError" in err or "connection" in err.lower():
+            return (
+                f"\u274c **Connection error** — could not reach Azure OpenAI.\n\n"
+                f"Most likely cause: the endpoint URL is wrong.\n"
+                f"- Current endpoint: `{endpoint}`\n"
+                f"- It must end with `.openai.azure.com/` (not a Foundry project URL).\n\n"
+                f"Raw error: `{exc}`"
+            )
         return f"Agent error: {exc}"
 
 
