@@ -1,16 +1,14 @@
 """
-Azure AutoML Demo - Streamlit App
-==================================
-Single-page layout:
-  A. New Training Job  (collapsed expander — upload + target + submit)
-  B. Job Results       (expander — only relevant when a job exists)
-  C. Responsible AI Agent (main area — model picker + chat)
+Azure AutoML Demo — Streamlit App
+Sections: New Training Job, Job Results, Responsible AI Agent
 """
 
 import pandas as pd
 import streamlit as st
 import logging
 import os
+import shutil
+from pathlib import Path
 
 from ml_pipeline import get_ml_client
 from register_model import register_best_model
@@ -20,7 +18,6 @@ from run_automl import (
     get_primary_metric,
     submit_automl_job,
 )
-from utils import save_uploaded_file
 
 os.environ.setdefault("TQDM_DISABLE", "1")
 
@@ -67,7 +64,12 @@ with st.expander("\u25b6 New AutoML Training Job", expanded=False):
     with _up_col:
         uploaded_file = st.file_uploader("CSV file", type=["csv"], label_visibility="collapsed")
         if uploaded_file:
-            _csv_path = save_uploaded_file(uploaded_file)
+            _upload_dir = Path("uploads")
+            _upload_dir.mkdir(exist_ok=True)
+            for _item in _upload_dir.iterdir():
+                shutil.rmtree(_item, ignore_errors=True) if _item.is_dir() else _item.unlink(missing_ok=True)
+            _csv_path = _upload_dir / uploaded_file.name
+            _csv_path.write_bytes(uploaded_file.getvalue())
             _df_up = pd.read_csv(_csv_path)
             st.session_state["_csv_path"] = str(_csv_path)
             st.caption(f"`{uploaded_file.name}` \u2014 {_df_up.shape[0]} rows \u00d7 {_df_up.shape[1]} cols")
@@ -100,7 +102,6 @@ with st.expander("\u25b6 New AutoML Training Job", expanded=False):
             "\u25b6\ufe0f Train", type="primary",
             disabled=not _can_train, use_container_width=True, key="run_button",
         ):
-            from pathlib import Path as _Path
             with st.spinner("Submitting\u2026"):
                 try:
                     _job = submit_automl_job(
@@ -111,7 +112,7 @@ with st.expander("\u25b6 New AutoML Training Job", expanded=False):
                     )
                     st.session_state["latest_automl_job_name"] = _job
                     st.session_state["rai_target_column"] = st.session_state["target_col_sel"]
-                    st.session_state["rai_data_asset_name"] = _Path(_csv_ready).stem
+                    st.session_state["rai_data_asset_name"] = Path(_csv_ready).stem
                     st.query_params["job"] = _job
                     st.success(f"Submitted: `{_job}`")
                 except Exception as _e:

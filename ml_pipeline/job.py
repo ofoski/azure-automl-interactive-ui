@@ -23,7 +23,7 @@ def run_automl_job(
     trial_timeout_minutes: int = DEFAULT_TRIAL_TIMEOUT_MINUTES,
     max_trials: int = DEFAULT_MAX_TRIALS,
 ) -> str:
-    """Create and submit an AutoML job."""
+    """Configure and submit an AutoML job, return the parent job name."""
     if problem_type not in ("Classification", "Regression"):
         raise ValueError(f"Invalid problem_type: {problem_type}")
 

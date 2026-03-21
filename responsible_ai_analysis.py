@@ -1,9 +1,8 @@
-"""Responsible AI analysis for registered Azure ML models."""
+"""Responsible AI analysis functions for registered Azure ML models."""
 
 from __future__ import annotations
 
 import importlib
-import os
 import pickle
 from pathlib import Path
 
@@ -12,32 +11,34 @@ from sklearn.inspection import permutation_importance
 import dice_ml
 
 from ml_pipeline import get_ml_client
-from register_model import register_best_model
 from run_automl import detect_problem_type
 
 client = get_ml_client()
 
 
 class DiceModelAdapter:
-    """Normalize Azure AutoML model outputs for DiCE."""
+    """Wrap an AutoML model to return numpy arrays for DiCE."""
 
     def __init__(self, model):
         self.model = model
 
     def predict(self, X):
+        """Predict and convert output to a numpy array."""
         predictions = self.model.predict(X)
         return predictions.to_numpy() if hasattr(predictions, "to_numpy") else predictions
 
     def predict_proba(self, X):
+        """Predict probabilities and convert output to a numpy array."""
         probabilities = self.model.predict_proba(X)
         return probabilities.to_numpy() if hasattr(probabilities, "to_numpy") else probabilities
 
 def _version_kwargs(version: str | None) -> dict:
+    """Build version or latest-label kwargs for Azure ML .get() calls."""
     return {"version": version} if version else {"label": "latest"}
 
 
 def load_model(model_name: str, version: str | None = None):
-    """Download a registered Azure ML model and return the loaded pipeline."""
+    """Download a registered model from Azure ML and return the deserialized pipeline."""
     if not version:
         raise ValueError("Model version is required. Pass the registered model version explicitly.")
 
@@ -45,7 +46,8 @@ def load_model(model_name: str, version: str | None = None):
     path = Path("model_artifacts") / info.name / str(info.version)
     path.mkdir(parents=True, exist_ok=True)
     client.models.download(name=info.name, version=info.version, download_path=str(path))
-    return pickle.load(open(next(path.rglob("model.pkl")), "rb"))
+    with open(next(path.rglob("model.pkl")), "rb") as f:
+        return pickle.load(f)
 
 
 def load_test_data(asset_name: str, version: str | None = None) -> pd.DataFrame:
@@ -62,7 +64,7 @@ def run_permutation_importance(
     test_asset_version: str | None = None,
     n_repeats: int = 10,
 ) -> pd.DataFrame:
-    """Load model and test data from Azure ML, return sorted permutation importance."""
+    """Compute permutation importance for a registered model and test asset."""
     model = load_model(model_name, model_version)
     df = load_test_data(test_asset_name, test_asset_version)
 
@@ -91,6 +93,7 @@ def fill_missing_values(X: pd.DataFrame) -> pd.DataFrame:
 
 
 def error_analysis(model, X_test, y_test, task_type="regression"):
+    """Compute mean error per group or bin for every feature."""
     X_test = fill_missing_values(X_test)
     df = X_test.copy()
     df["y_true"] = y_test.values
@@ -116,8 +119,7 @@ def fairness_analysis(
     sensitive_features: list | None = None,
     n_bins: int = 4,
 ) -> dict:
-    """Compute per-group fairness metrics using fairlearn.metrics.MetricFrame."""
-    import numpy as np
+    """Compute per-group fairness metrics for every feature."""
     from fairlearn.metrics import MetricFrame, selection_rate, true_positive_rate
     from sklearn.metrics import accuracy_score, mean_absolute_error
 
@@ -156,7 +158,7 @@ def run_counterfactuals(
     desired_class: str | int | None = "opposite",
     total_cfs: int = 5,
 ):
-    """Generate DiCE counterfactuals for one test instance."""
+    """Generate counterfactual examples for a single test instance using DiCE."""
     X_train = fill_missing_values(X_train)
     X_test = fill_missing_values(X_test)
     train_cf = X_train.copy()
@@ -176,7 +178,6 @@ def run_counterfactuals(
     exp = dice_ml.Dice(data, dice_model, method="random")
 
     query_instance = X_test.iloc[[instance_index]]
-    actual_value = y_test.iloc[instance_index]
 
     if task_type == "classification":
         return exp.generate_counterfactuals(
@@ -210,14 +211,14 @@ def run_counterfactuals(
 
 
 def infer_train_asset_name(test_asset_name: str) -> str:
-    """Infer the paired train asset name from a test asset name."""
+    """Infer the paired train asset name from a test asset name ending with '-test'."""
     if test_asset_name.endswith("-test"):
         return f"{test_asset_name[:-5]}-train"
     raise ValueError("Could not infer train asset name. Set TRAIN_ASSET explicitly.")
 
 
 def build_data_context(X_test: pd.DataFrame, y_test, target_column: str) -> str:
-    """Build a statistical summary of the test dataset for the LLM system prompt."""
+    """Build a statistical summary of the test data for the LLM system prompt."""
     df = X_test.copy()
     df[target_column] = y_test.values
     return (

@@ -1,4 +1,4 @@
-"""Azure ML client helpers."""
+"""Azure ML workspace client setup."""
 
 import os
 from functools import lru_cache
@@ -8,6 +8,7 @@ from azure.identity import DefaultAzureCredential
 
 @lru_cache(maxsize=64)
 def _create_credential(tenant_id: str | None):
+    """Create a cached Azure credential for the given tenant."""
     return DefaultAzureCredential(
         exclude_interactive_browser_credential=False,
         interactive_browser_tenant_id=tenant_id,
@@ -15,6 +16,7 @@ def _create_credential(tenant_id: str | None):
 
 
 def _resolve_subscription_id(subscription_id: str | None) -> str:
+    """Get subscription ID from the argument or environment variable."""
     if subscription_id:
         return subscription_id
 
@@ -32,7 +34,7 @@ def get_ml_client(
     resource_group: str | None = None,
     workspace_name: str | None = None,
 ) -> MLClient:
-    """Create an MLClient from args or environment variables."""
+    """Create an authenticated MLClient using args or environment variables."""
     resolved_subscription_id = _resolve_subscription_id(subscription_id)
     resolved_resource_group = resource_group or os.environ.get("AZURE_RESOURCE_GROUP")
     resolved_workspace_name = workspace_name or os.environ.get("AZURE_WORKSPACE_NAME")

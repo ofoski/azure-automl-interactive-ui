@@ -1,4 +1,4 @@
-"""AutoML helpers used by the Streamlit app."""
+"""AutoML helpers for the Streamlit app."""
 
 import pandas as pd
 
@@ -13,11 +13,8 @@ PRIMARY_METRICS = {
 }
 
 
-def _ml_client(subscription_id: str | None = None):
-    return get_ml_client(subscription_id=subscription_id)
-
-
 def detect_problem_type(dataframe: pd.DataFrame, target_column: str) -> dict:
+    """Classify the target column as Classification or Regression."""
     target = dataframe[target_column].dropna()
     if target.empty:
         raise ValueError("Target column has no non-null values.")
@@ -39,6 +36,7 @@ def detect_problem_type(dataframe: pd.DataFrame, target_column: str) -> dict:
 
 
 def get_primary_metric(problem_type: str) -> str:
+    """Return the primary metric string for a given problem type."""
     if problem_type not in PRIMARY_METRICS:
         raise ValueError("Unsupported problem type. Use 'Classification' or 'Regression'.")
     return PRIMARY_METRICS[problem_type]
@@ -52,7 +50,8 @@ def submit_automl_job(
     vm_size: str = DEFAULT_VM_SIZE,
     subscription_id: str | None = None,
 ) -> str:
-    ml_client = _ml_client(subscription_id)
+    """Register data and submit an AutoML training job, return the job name."""
+    ml_client = get_ml_client(subscription_id=subscription_id)
     train_data_id = register_train_test_data(
         ml_client=ml_client,
         local_csv_path=csv_path,
@@ -71,5 +70,4 @@ def submit_automl_job(
     )
 
     return job_name
-
 

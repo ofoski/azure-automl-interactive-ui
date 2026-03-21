@@ -1,4 +1,4 @@
-"""Register uploaded CSV data as train/test MLTable Data Assets."""
+"""Register uploaded CSV data as train/test MLTable data assets in Azure ML."""
 
 import tempfile
 from pathlib import Path
@@ -15,6 +15,7 @@ _ID_UNIQUE_RATIO = 0.98
 
 
 def _prepare_automl_dataframe(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
+    """Remove ID, constant, and free-text columns before training."""
     keep_columns = [target_column]
 
     for column in df.columns:
@@ -48,6 +49,7 @@ def _prepare_automl_dataframe(df: pd.DataFrame, target_column: str) -> pd.DataFr
 
 
 def data_split_mltable(base_dir: Path, split_name: str, split_df: pd.DataFrame) -> Path:
+    """Write a DataFrame to CSV and create an MLTable YAML definition."""
     split_dir = base_dir / f"{split_name}_mltable"
     split_dir.mkdir(parents=True, exist_ok=True)
 

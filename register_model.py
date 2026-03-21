@@ -1,7 +1,6 @@
-"""Register best model from a completed AutoML job."""
+"""Register the best model from a completed AutoML job."""
 
-from azureml.core import Model as LegacyModel
-from azureml.core import Workspace
+from azure.ai.ml.entities import Model
 
 from ml_pipeline import get_ml_client
 
@@ -10,7 +9,7 @@ def register_best_model(
     job_name: str,
     subscription_id: str | None = None,
 ) -> dict:
-    """Register best model from a completed AutoML parent job."""
+    """Register the best model from a completed AutoML job in Azure ML."""
     ml_client = get_ml_client(subscription_id=subscription_id)
 
     parent_job = ml_client.jobs.get(job_name)
@@ -53,19 +52,13 @@ def register_best_model(
             "already_registered": True,
         }
 
-    download_path = "uploads/_registration_tmp"
-    ml_client.jobs.download(name=job_name, download_path=download_path, output_name="best_model")
-
-    workspace = Workspace(
-        subscription_id=ml_client.subscription_id,
-        resource_group=ml_client.resource_group_name,
-        workspace_name=ml_client.workspace_name,
+    model = Model(
+        name=registered_name,
+        path=source_path,
+        type="custom_model",
+        description=f"Best model from {job_name}",
     )
-    created = LegacyModel.register(
-        workspace=workspace,
-        model_name=registered_name,
-        model_path=f"{download_path}/named-outputs/best_model",
-    )
+    created = ml_client.models.create_or_update(model)
 
     created_name = getattr(created, "name", registered_name)
     created_version = str(getattr(created, "version", "1"))

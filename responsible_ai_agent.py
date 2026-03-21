@@ -1,16 +1,4 @@
-"""Responsible AI Agent — Azure OpenAI function-calling backend.
-
-This module exposes ``run_agent()`` for use by the Streamlit app (app.py).
-All UI code lives in app.py; this file contains only the agent logic.
-
-Prerequisites — set in PowerShell before running the app
----------------------------------------------------------
-    $env:AZURE_OPENAI_ENDPOINT = "https://<resource>.openai.azure.com/"
-    $env:AZURE_OPENAI_API_KEY  = "<your-api-key>"
-
-The app is started with:
-    streamlit run app.py
-"""
+"""Responsible AI agent powered by Azure OpenAI function-calling."""
 
 from __future__ import annotations
 
@@ -42,29 +30,62 @@ SYSTEM_PROMPT = (
     "Analyze the data context above and reason about:\n"
     "- What domain this dataset likely belongs to based on column names and value ranges\n"
     "- What the target column represents and what predicting it means in the real world\n"
-    "- Which features are sensitive from a fairness perspective based on their names and distributions\n"
+    "- Which features are sensitive from a fairness perspective\n"
     "- Which features are actionable based on their nature and value ranges\n"
     "- What constitutes a large vs small error based on the target distribution\n"
     "- What value ranges are realistic for counterfactual changes based on min/max/mean/std\n"
     "Use this understanding to give domain-aware, specific, and meaningful answers.\n"
-    "Ground all recommendations in the actual data statistics — "
-    "do not suggest changes outside the realistic range of the data.\n\n"
+    "Ground all recommendations in the actual data statistics.\n\n"
 
     "TOOL GUIDANCE:\n"
     "- get_permutation_importance: returns features ranked by importance_mean. "
     "Higher = more influential. Values near 0 or negative mean negligible impact — "
     "describe these as not contributing, not hurting the model.\n"
     "- get_error_analysis: returns mean error per group or bin. "
-    "Focus on features with large gaps between best and worst group. "
-    "If a group has very few samples, note that its error rate may be unreliable.\n"
+    "Focus on features with large gaps between best and worst group.\n"
     "- get_fairness_analysis: returns performance metrics per group plus a gap score. "
     "For regression: MAE per group. "
     "For classification: accuracy, selection_rate, true_positive_rate per group. "
-    "Gap above 0.1 for classification or above 20 percent of mean MAE for regression "
-    "is a fairness concern. Always mention which group has the highest gap.\n"
+    "A notable gap between groups is a fairness concern — judge significance "
+    "based on the data distribution rather than a fixed threshold. "
+    "Always mention which group has the highest gap.\n\n"
+
+    "METRIC DEFINITIONS — read carefully before interpreting any fairness result:\n"
+    "- Accuracy: the percentage of predictions the model got correct for that group. "
+    "Higher is better.\n"
+    "- Selection rate: how often the model predicts the positive outcome for a group. "
+    "This reflects only what the model predicted — it has nothing to do with "
+    "actual real world decisions or outcomes. "
+    "Never describe selection rate as approvals, rejections, or any real world action — "
+    "it is purely a measure of the model's prediction behavior.\n"
+    "- True positive rate: out of all cases in a group that actually had the positive outcome, "
+    "how many the model correctly identified. "
+    "A low true positive rate means the model is failing to detect many real positive cases "
+    "in that group — this is a significant concern as it means real cases are being missed.\n"
+    "- Performance gap: the difference between the best and worst performing group. "
+    "A large gap indicates the model treats groups unequally — "
+    "always report which group performs best and which performs worst.\n"
+    "- When a group shows extreme values such as 0% or 100% for any metric: "
+    "always check and report the sample size of that group. "
+    "Report the group size alongside the metric so the user can judge reliability themselves.\n\n"
+
     "- get_counterfactuals: returns minimal feature changes that would alter the prediction. "
-    "Explain each change in plain terms such as increasing income from 30,000 to 45,000. "
-    "Always separate actionable vs non-actionable changes in your explanation.\n\n"
+    "Explain each change in plain terms. "
+    "For each change clearly state whether it is realistic and applicable or not. "
+    "Some features are not realistic to change — "
+    "for example biological characteristics, fixed demographic attributes, "
+    "characteristics tied to past events, or attributes requiring significant life changes. "
+    "For these: mention them and explain their impact but state they are "
+    "not realistic or applicable to change. "
+    "For applicable changes: the suggested value must be realistic — "
+    "cross check against the data statistics and flag any suggestion "
+    "that falls far outside the normal range of that feature as unreliable. "
+    "If a suggestion seems counterintuitive or goes against common sense "
+    "in the real world context, flag it clearly as unreliable and do not "
+    "present it as a recommendation. "
+    "If all suggested changes are either unrealistic or counterintuitive, "
+    "explicitly tell the user that no actionable recommendations can be made "
+    "from these results and suggest they try a different instance.\n\n"
 
     "TOOL CALLING STRATEGY:\n"
     "- For broad questions about model quality or full reports: "
@@ -79,42 +100,28 @@ SYSTEM_PROMPT = (
     "Before presenting any counterfactual change, reason about whether that change "
     "is realistically possible based on the data statistics and real world context.\n\n"
 
-    "Features that are generally NOT actionable:\n"
+    "Features that are generally not realistic or applicable to change:\n"
     "- Immutable biological characteristics a person is born with\n"
-    "- Identity and demographic attributes that cannot be changed\n"
+    "- Identity and demographic attributes that are fixed\n"
     "- High cardinality identifier columns such as ID, ticket number, name — "
-    "these are unique per row and carry no predictive meaning\n"
+    "these carry no predictive meaning\n"
     "- Geographic coordinates such as latitude and longitude\n"
-    "- Timestamps and dates of past events\n\n"
-
-    "Features that are generally actionable:\n"
-    "- Financial attributes such as income, savings, payments\n"
-    "- Choice-based attributes such as product type, subscription, plan\n"
-    "- Behavioral attributes such as spending, usage, activity frequency\n"
-    "- Attributes that represent decisions a person can consciously make\n\n"
-
-    "Borderline features:\n"
-    "- Features like country, region, or zip code can be changed but require "
-    "significant life decisions — mention the change but note it may not be "
-    "practical for everyone.\n\n"
+    "- Timestamps and dates of past events\n"
+    "- Features that require significant life changes — "
+    "mention their impact but note they are not realistic to change\n\n"
 
     "High cardinality features:\n"
     "- If a feature has many unique values such as IDs, names, or codes, "
-    "flag it as not meaningful for analysis and do not draw conclusions from it.\n\n"
+    "flag it as not meaningful for analysis.\n\n"
 
     "RESPONSE GUIDELINES:\n"
-    "- Always call a tool before answering questions about model behaviour.\n"
-    "- Summarise numerical results — do not paste raw tables.\n"
-    "- Highlight the most important finding first.\n"
-    "- For error analysis: note when a group has very few samples as results may be unreliable.\n"
-    "- For counterfactuals: always end with practical recommendations using only "
-    "actionable features. If no actionable changes exist, explicitly tell the user.\n"
+    "- For error analysis: always report group sample size when results seem unusual.\n"
     "- For fairness: use measured language — say the model shows a performance gap "
-    "rather than the model is biased. Avoid definitive causal claims — say "
-    "associated with rather than caused by.\n"
-    "- When making recommendations: ground them in the data statistics and domain context. "
-    "Avoid generic statements — be specific about what the data suggests.\n"
-    "- Only use information returned by tools — do not guess or invent values.\n"
+    "rather than the model is biased. Avoid definitive causal claims.\n"
+    "- When a group performs poorly on a metric that aligns with its expected "
+    "real world risk profile, note that this may reflect genuine risk differences "
+    "rather than model bias — distinguish between the two carefully.\n"
+    "- When making recommendations: ground them in the data statistics and domain context.\n"
 )
 
 _TOOLS = [
@@ -167,7 +174,7 @@ _TOOLS = [
                 },
                 "total_cfs": {
                     "type": "integer",
-                    "description": "Number of counterfactuals to generate. Default 3."
+                    "description": "Number of counterfactuals to generate. Default 5."
                 },
             },
             "required": [],
@@ -185,26 +192,7 @@ def run_agent(
     chat_history: list[dict] | None = None,
     deployment: str = "",
 ) -> str:
-    """Run one turn of the RAI agent using Azure OpenAI function-calling.
-
-    Parameters
-    ----------
-    user_message : str
-        The user's question.
-    context : dict
-        Keys: model, X_test, y_test, X_train, y_train, task_type,
-              model_name, model_version, target_column, test_asset.
-    cache : dict
-        Mutable dict for caching tool results between calls.  Pass a
-        persistent dict (e.g. from ``st.session_state``) so results survive
-        Streamlit reruns.
-    openai_endpoint : str, optional
-        Azure OpenAI endpoint URL.  Falls back to ``AZURE_OPENAI_ENDPOINT``.
-    api_key : str, optional
-        Azure OpenAI API key.  Falls back to ``AZURE_OPENAI_API_KEY``.
-    chat_history : list[dict], optional
-        Previous conversation turns in ``[{role, content}]`` format.
-    """
+    """Handle one chat turn: validate config, call Azure OpenAI with tools, return response."""
     endpoint   = openai_endpoint or os.environ.get("AZURE_OPENAI_ENDPOINT", "")
     key        = api_key         or os.environ.get("AZURE_OPENAI_API_KEY", "")
     model_name = deployment      or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
@@ -251,8 +239,7 @@ def run_agent(
     # ------------------------------------------------------------------
 
     def get_permutation_importance() -> str:
-        """Returns feature importance scores using permutation importance.
-        Use when the user asks which features matter most or drive predictions."""
+        """Return cached or freshly computed permutation importance results."""
         if "importance" not in cache:
             df = run_permutation_importance(
                 model_name=context["model_name"],
@@ -264,8 +251,7 @@ def run_agent(
         return cache["importance"]
 
     def get_error_analysis() -> str:
-        """Returns average model error per feature group or bin.
-        Use when the user asks where the model makes the most mistakes or underperforms."""
+        """Return cached or freshly computed error analysis results."""
         if "error" not in cache:
             results = error_analysis(
                 model=context["model"],
@@ -278,8 +264,7 @@ def run_agent(
         return cache["error"]
 
     def get_fairness_analysis() -> str:
-        """Returns per-group fairness metrics for each feature.
-        Use when the user asks about bias, fairness, or group disparities."""
+        """Return cached or freshly computed fairness analysis results."""
         if "fairness" not in cache:
             results = fairness_analysis(
                 model=context["model"],
@@ -291,14 +276,8 @@ def run_agent(
             cache["fairness"] = "\n\n".join(parts)
         return cache["fairness"]
 
-    def get_counterfactuals(instance_index: int = 0, total_cfs: int = 3) -> str:
-        """Generates counterfactual examples showing minimal changes that would alter the prediction.
-        Use when the user asks what-if questions or how to improve an outcome.
-        :param instance_index: Index of the test instance (0-based). Default 0.
-        :type instance_index: int
-        :param total_cfs: Number of counterfactuals to generate. Default 3.
-        :type total_cfs: int
-        """
+    def get_counterfactuals(instance_index: int = 0, total_cfs: int = 5) -> str:
+        """Return cached or freshly generated counterfactual examples."""
         key = f"cf_{instance_index}_{total_cfs}"
         if key not in cache:
             task_type = context["task_type"]
@@ -327,17 +306,17 @@ def run_agent(
             )
         return cache[key]
 
-    # ------------------------------------------------------------------
-    # Tool dispatch — closures already defined above, keyed by name
-    # ------------------------------------------------------------------
-    _dispatch = {
-        "get_permutation_importance": lambda a: get_permutation_importance(),
-        "get_error_analysis":         lambda a: get_error_analysis(),
-        "get_fairness_analysis":      lambda a: get_fairness_analysis(),
-        "get_counterfactuals":        lambda a: get_counterfactuals(
-            a.get("instance_index", 0), a.get("total_cfs", 3)
-        ),
-    }
+    def dispatch(name: str, args: dict) -> str:
+        """Route a tool call name to the matching function."""
+        if name == "get_permutation_importance":
+            return get_permutation_importance()
+        if name == "get_error_analysis":
+            return get_error_analysis()
+        if name == "get_fairness_analysis":
+            return get_fairness_analysis()
+        if name == "get_counterfactuals":
+            return get_counterfactuals(args.get("instance_index", 0), args.get("total_cfs", 5))
+        raise ValueError(f"Unknown tool: {name}")
 
     try:
         client = AzureOpenAI(
@@ -360,7 +339,7 @@ def run_agent(
         )
 
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
-        for turn in (chat_history or [])[-6:]:
+        for turn in (chat_history or [])[-10:]:
             messages.append({"role": turn["role"], "content": turn["content"]})
         messages.append({"role": "user", "content": user_message})
 
@@ -379,7 +358,7 @@ def run_agent(
             messages.append(msg)
             for tc in msg.tool_calls:
                 fn_args = json.loads(tc.function.arguments or "{}")
-                result  = _dispatch[tc.function.name](fn_args)
+                result = dispatch(tc.function.name, fn_args)
                 messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
         return "Agent reached max tool-call rounds. Try rephrasing your question."

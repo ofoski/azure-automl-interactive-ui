@@ -1,6 +1,5 @@
-# ============================================================
-# AUTOML PACKAGE
-# ============================================================
+"""Azure ML pipeline helpers."""
+
 from .client import get_ml_client
 from .data import register_train_test_data
 from .job import run_automl_job
