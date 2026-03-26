@@ -47,7 +47,11 @@ def run_automl_job(
         )
 
     # For this SDK version, ensemble flags must be applied via set_training().
-    job.set_training(enable_stack_ensemble=False, enable_vote_ensemble=False)
+    job.set_training(
+        enable_stack_ensemble=False,
+        enable_vote_ensemble=False,
+        n_cross_validations=5,
+    )
     job.set_featurization(mode="auto")
 
     if vm_size:

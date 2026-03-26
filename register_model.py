@@ -57,6 +57,7 @@ def register_best_model(
         path=source_path,
         type="custom_model",
         description=f"Best model from {job_name}",
+        tags={"parent_job_name": job_name},
     )
     created = ml_client.models.create_or_update(model)
 
