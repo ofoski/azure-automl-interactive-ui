@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import importlib
 import pickle
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import pandas as pd
@@ -38,7 +41,7 @@ def _version_kwargs(version: str | None) -> dict:
 
 
 def load_model(model_name: str, version: str | None = None):
-    """Download a registered model from Azure ML and return the deserialized pipeline."""
+    """Download a registered model from Azure ML and return the pipeline via MLflow."""
     if not version:
         raise ValueError("Model version is required. Pass the registered model version explicitly.")
 
@@ -46,8 +49,51 @@ def load_model(model_name: str, version: str | None = None):
     path = Path("model_artifacts") / info.name / str(info.version)
     path.mkdir(parents=True, exist_ok=True)
     client.models.download(name=info.name, version=info.version, download_path=str(path))
-    with open(next(path.rglob("model.pkl")), "rb") as f:
-        return pickle.load(f)
+
+    # Azure ML SDK creates a redundant inner {name}/ folder inside the download path.
+    # Flatten it so the layout becomes: path/mlflow-model/ (or path/best_model/).
+    inner = path / info.name
+    if inner.is_dir():
+        for item in inner.iterdir():
+            dest = path / item.name
+            if not dest.exists():
+                shutil.move(str(item), str(dest))
+        shutil.rmtree(str(inner))
+
+    # Locate the MLflow model directory by the known Azure AutoML folder names.
+    for candidate in ("mlflow-model", "best_model"):
+        mlflow_dir = path / candidate
+        if (mlflow_dir / "MLmodel").exists():
+            # Install the model's dependencies.
+            # onnx 1.17.0 has a broken DLL on Windows; use a constraints file to
+            # cap it at 1.16.1 for both direct and transitive installs.
+            req_file = mlflow_dir / "requirements.txt"
+            if req_file.exists():
+                # Write a constraints file so any transitive install of onnx is capped at 1.16.1.
+                # onnx 1.17.0 ships a broken DLL on Windows.
+                constraints_file = mlflow_dir / "_constraints.txt"
+                constraints_file.write_text("onnx==1.16.1\n", encoding="utf-8")
+
+                _ONNX_PKGS = {"onnx", "onnxruntime", "onnxconverter-common", "onnxmltools", "skl2onnx", "keras2onnx"}
+                pkgs = [
+                    line.strip()
+                    for line in req_file.read_text(encoding="utf-8").splitlines()
+                    if line.strip()
+                    and not line.strip().startswith("#")
+                    and not line.strip().startswith("--")
+                    and line.strip().split("=")[0].split(">")[0].split("<")[0].strip().lower() not in _ONNX_PKGS
+                ]
+                subprocess.check_call([
+                    sys.executable, "-m", "pip", "install", "-q",
+                    "--constraint", str(constraints_file),
+                    *pkgs,
+                ])
+            with open(mlflow_dir / "model.pkl", "rb") as f:
+                return pickle.load(f)
+
+    raise FileNotFoundError(
+        f"Could not find 'mlflow-model' or 'best_model' folder under {path}"
+    )
 
 
 def load_test_data(asset_name: str, version: str | None = None) -> pd.DataFrame:

@@ -46,10 +46,13 @@ def run_automl_job(
             enable_model_explainability=True
         )
 
-    # For this SDK version, ensemble flags must be applied via set_training().
     job.set_training(
         enable_stack_ensemble=False,
         enable_vote_ensemble=False,
+    )
+    job.set_data(
+        training_data=training_data_input,
+        target_column_name=target_column,
         n_cross_validations=5,
     )
     job.set_featurization(mode="auto")

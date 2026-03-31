@@ -14,16 +14,21 @@ This guide walks you through setting up the project from scratch.
 
 ## Step 1 — Install dependencies
 
+**Windows (recommended):** Use the venv's Python directly to avoid pip pointing to the wrong interpreter:
+
 ```powershell
-pip install -r requirements.txt
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-> If you use a virtual environment (recommended):
-> ```powershell
-> python -m venv .venv
-> .venv\Scripts\Activate.ps1
-> pip install -r requirements.txt
-> ```
+> **Note for Windows users:** Using `pip install -r requirements.txt` directly may install packages into the system Python instead of your venv, causing `ModuleNotFoundError` when running the app. Always use `.venv\Scripts\python.exe -m pip install` to ensure packages go into the correct environment.
+
+**macOS / Linux:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
 
 ---
 
@@ -108,6 +113,8 @@ All six should show `OK`.
 
 | Error | Cause | Fix |
 |---|---|---|
+| `ModuleNotFoundError: No module named 'azure.ai.ml'` | `pip` installed into system Python, not the venv | Use `.venv\Scripts\python.exe -m pip install -r requirements.txt` |
+| `ImportError: cannot import name 'FieldInstanceResolutionError' from 'marshmallow'` | marshmallow 4.x installed instead of 3.x | Re-install with `.venv\Scripts\python.exe -m pip install -r requirements.txt` |
 | `DeploymentNotFound` | Wrong deployment name | Check the exact name in AI Foundry → Models + endpoints |
 | `Resource not found (404)` | Wrong endpoint URL | Use the `.openai.azure.com/` endpoint, not the Foundry project URL |
 | `Subscription ID not provided` | Env var not set | Re-run Step 4 |
