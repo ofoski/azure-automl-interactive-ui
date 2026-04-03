@@ -5,8 +5,6 @@ from __future__ import annotations
 import importlib
 import pickle
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 import pandas as pd
@@ -64,30 +62,6 @@ def load_model(model_name: str, version: str | None = None):
     for candidate in ("mlflow-model", "best_model"):
         mlflow_dir = path / candidate
         if (mlflow_dir / "MLmodel").exists():
-            # Install the model's dependencies.
-            # onnx 1.17.0 has a broken DLL on Windows; use a constraints file to
-            # cap it at 1.16.1 for both direct and transitive installs.
-            req_file = mlflow_dir / "requirements.txt"
-            if req_file.exists():
-                # Write a constraints file so any transitive install of onnx is capped at 1.16.1.
-                # onnx 1.17.0 ships a broken DLL on Windows.
-                constraints_file = mlflow_dir / "_constraints.txt"
-                constraints_file.write_text("onnx==1.16.1\n", encoding="utf-8")
-
-                _ONNX_PKGS = {"onnx", "onnxruntime", "onnxconverter-common", "onnxmltools", "skl2onnx", "keras2onnx"}
-                pkgs = [
-                    line.strip()
-                    for line in req_file.read_text(encoding="utf-8").splitlines()
-                    if line.strip()
-                    and not line.strip().startswith("#")
-                    and not line.strip().startswith("--")
-                    and line.strip().split("=")[0].split(">")[0].split("<")[0].strip().lower() not in _ONNX_PKGS
-                ]
-                subprocess.check_call([
-                    sys.executable, "-m", "pip", "install", "-q",
-                    "--constraint", str(constraints_file),
-                    *pkgs,
-                ])
             with open(mlflow_dir / "model.pkl", "rb") as f:
                 return pickle.load(f)
 
