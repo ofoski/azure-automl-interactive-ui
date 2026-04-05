@@ -82,12 +82,13 @@ $env:AZURE_WORKSPACE_NAME    = "<your-workspace-name>"
 $env:AZURE_OPENAI_ENDPOINT   = "https://<resource-name>.openai.azure.com/"
 $env:AZURE_OPENAI_API_KEY    = "<your-api-key>"
 $env:AZURE_OPENAI_DEPLOYMENT = "gpt-4o-mini"   # the deployment name from Step 2
-$env:AZURE_TENANT_ID         = "<your-tenant-id>"  # Find in Azure Portal → Azure Active Directory → Overview
 ```
 
 > **These are session variables.** They are only set for the current PowerShell window and are never saved to disk or committed to Git. You need to re-run these commands each time you open a new terminal.
 
 > **Tip:** To make env vars persist across terminal sessions, append them to `lastenv\Scripts\Activate.ps1`. They will be set automatically every time you activate the venv.
+
+> **Azure authentication:** When the app connects to Azure for the first time, a browser window will open automatically asking you to sign in. Tenant ID is resolved automatically from your login — no need to set it manually.
 
 ---
 
@@ -95,14 +96,14 @@ $env:AZURE_TENANT_ID         = "<your-tenant-id>"  # Find in Azure Portal → Az
 
 ```powershell
 @("AZURE_OPENAI_ENDPOINT","AZURE_OPENAI_API_KEY","AZURE_OPENAI_DEPLOYMENT",
-  "AZURE_SUBSCRIPTION_ID","AZURE_RESOURCE_GROUP","AZURE_WORKSPACE_NAME","AZURE_TENANT_ID") |
+  "AZURE_SUBSCRIPTION_ID","AZURE_RESOURCE_GROUP","AZURE_WORKSPACE_NAME") |
   ForEach-Object {
     $val = [System.Environment]::GetEnvironmentVariable($_)
     if ($val) { Write-Host "OK      $_" } else { Write-Host "MISSING $_" }
   }
 ```
 
-All seven should show `OK`.
+All six should show `OK`.
 
 ---
 
