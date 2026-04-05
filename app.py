@@ -9,7 +9,6 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from dotenv import load_dotenv
 
 
 from ml_pipeline import get_ml_client
@@ -395,17 +394,24 @@ with tab3:
 
             def _run_agent(user_msg: str) -> str:
                 from responsible_ai_agent import run_agent as _rai_fn
+                from model_utils import extract_child_metrics
+                try:
+                    _pjob = get_ml_client().models.get(_model_name, version=_model_version).tags.get("parent_job_name") or (_model_name[len("best-model-"):].rsplit("_", 1)[0] if _model_name.startswith("best-model-") else None)
+                    _cmp_str = extract_child_metrics(get_ml_client(), _pjob).to_string(index=False) if _pjob else ""
+                except Exception:
+                    _cmp_str = ""
                 _ctx = {
-                    "model":         _rai["model"],
-                    "X_test":        _rai["X_test"],
-                    "y_test":        _rai["y_test"],
-                    "X_train":       _rai["X_train"],
-                    "y_train":       _rai["y_train"],
-                    "task_type":     _rai["task_type"],
-                    "model_name":    _model_name,
-                    "model_version": _model_version,
-                    "target_column": _target_col,
-                    "test_asset":    f"{_data_asset}-test",
+                    "model":            _rai["model"],
+                    "X_test":           _rai["X_test"],
+                    "y_test":           _rai["y_test"],
+                    "X_train":          _rai["X_train"],
+                    "y_train":          _rai["y_train"],
+                    "task_type":        _rai["task_type"],
+                    "model_name":       _model_name,
+                    "model_version":    _model_version,
+                    "target_column":    _target_col,
+                    "test_asset":       f"{_data_asset}-test",
+                    "model_comparison": _cmp_str,
                 }
                 return _rai_fn(
                     user_message=user_msg,

@@ -1,7 +1,5 @@
 # Virtual Environments
 .venv/
-.venv_model310/
-.venv_artifact/
 venv/
 
 # Temporary uploads folder
