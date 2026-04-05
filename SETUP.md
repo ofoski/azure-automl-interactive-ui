@@ -14,20 +14,20 @@ This guide walks you through setting up the project from scratch.
 
 ## Step 1 — Install dependencies
 
-**Windows (recommended):** Use the venv's Python directly to avoid pip pointing to the wrong interpreter:
+**Windows (recommended):** Create a virtual environment, then use the venv's pip directly:
 
 ```powershell
-python -m venv .venv
-.venv\Scripts\python.exe -m pip install -r requirements.txt
+python -m venv lastenv
+lastenv\Scripts\pip.exe install --no-deps -r app_requirements.txt
 ```
 
-> **Note for Windows users:** Using `pip install -r requirements.txt` directly may install packages into the system Python instead of your venv, causing `ModuleNotFoundError` when running the app. Always use `.venv\Scripts\python.exe -m pip install` to ensure packages go into the correct environment.
+> **Why `--no-deps`?** Some Azure ML packages have conflicting transitive dependencies (e.g. `psutil`). Using `--no-deps` installs exactly the pinned versions in `app_requirements.txt` without automatic dependency resolution, which avoids version conflicts. All required packages including transitive dependencies are already listed in the file.
 
 **macOS / Linux:**
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+python3 -m venv lastenv
+source lastenv/bin/activate
+pip install --no-deps -r app_requirements.txt
 ```
 
 ---
@@ -82,15 +82,12 @@ $env:AZURE_WORKSPACE_NAME    = "<your-workspace-name>"
 $env:AZURE_OPENAI_ENDPOINT   = "https://<resource-name>.openai.azure.com/"
 $env:AZURE_OPENAI_API_KEY    = "<your-api-key>"
 $env:AZURE_OPENAI_DEPLOYMENT = "gpt-4o-mini"   # the deployment name from Step 2
+$env:AZURE_TENANT_ID         = "<your-tenant-id>"  # Find in Azure Portal → Azure Active Directory → Overview
 ```
 
 > **These are session variables.** They are only set for the current PowerShell window and are never saved to disk or committed to Git. You need to re-run these commands each time you open a new terminal.
 
-> **Optional:** If Azure credential login fails, also set:
-> ```powershell
-> $env:AZURE_TENANT_ID = "<your-tenant-id>"
-> ```
-> Find it in Azure Portal → Azure Active Directory → Overview → Tenant ID. When it connects to Azure for the first time, a browser window will open automatically asking you to sign in with your Azure account.
+> **Tip:** To make env vars persist across terminal sessions, append them to `lastenv\Scripts\Activate.ps1`. They will be set automatically every time you activate the venv.
 
 ---
 
@@ -98,14 +95,14 @@ $env:AZURE_OPENAI_DEPLOYMENT = "gpt-4o-mini"   # the deployment name from Step 2
 
 ```powershell
 @("AZURE_OPENAI_ENDPOINT","AZURE_OPENAI_API_KEY","AZURE_OPENAI_DEPLOYMENT",
-  "AZURE_SUBSCRIPTION_ID","AZURE_RESOURCE_GROUP","AZURE_WORKSPACE_NAME") |
+  "AZURE_SUBSCRIPTION_ID","AZURE_RESOURCE_GROUP","AZURE_WORKSPACE_NAME","AZURE_TENANT_ID") |
   ForEach-Object {
     $val = [System.Environment]::GetEnvironmentVariable($_)
     if ($val) { Write-Host "OK      $_" } else { Write-Host "MISSING $_" }
   }
 ```
 
-All six should show `OK`.
+All seven should show `OK`.
 
 ---
 
@@ -113,8 +110,8 @@ All six should show `OK`.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `ModuleNotFoundError: No module named 'azure.ai.ml'` | `pip` installed into system Python, not the venv | Use `.venv\Scripts\python.exe -m pip install -r requirements.txt` |
-| `ImportError: cannot import name 'FieldInstanceResolutionError' from 'marshmallow'` | marshmallow 4.x installed instead of 3.x | Re-install with `.venv\Scripts\python.exe -m pip install -r requirements.txt` |
+| `ModuleNotFoundError: No module named 'azure.ai.ml'` | `pip` installed into system Python, not the venv | Use `lastenv\Scripts\pip.exe install --no-deps -r app_requirements.txt` |
+| `ImportError: cannot import name 'FieldInstanceResolutionError' from 'marshmallow'` | marshmallow 4.x installed instead of 3.x | Re-install with `lastenv\Scripts\pip.exe install --no-deps -r app_requirements.txt` |
 | `DeploymentNotFound` | Wrong deployment name | Check the exact name in AI Foundry → Models + endpoints |
 | `Resource not found (404)` | Wrong endpoint URL | Use the `.openai.azure.com/` endpoint, not the Foundry project URL |
 | `Subscription ID not provided` | Env var not set | Re-run Step 4 |
