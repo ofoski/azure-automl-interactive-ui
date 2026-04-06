@@ -86,6 +86,8 @@ $env:AZURE_OPENAI_DEPLOYMENT = "gpt-4o-mini"   # the deployment name from Step 2
 
 > **These are session variables.** They are only set for the current PowerShell window and are never saved to disk or committed to Git. You need to re-run these commands each time you open a new terminal.
 
+> **Important:** Set the variables in the **same terminal** where you run `streamlit run app.py`. If you set them in one terminal and start Streamlit in another, the app will not see them and agent calls will fail with a 404 or missing-key error.
+
 > **Tip:** To make env vars persist across terminal sessions, append them to `lastenv\Scripts\Activate.ps1`. They will be set automatically every time you activate the venv.
 
 > **Azure authentication:** When the app connects to Azure for the first time, a browser window will open automatically asking you to sign in. Tenant ID is resolved automatically from your login — no need to set it manually.
@@ -115,6 +117,7 @@ All six should show `OK`.
 | `ImportError: cannot import name 'FieldInstanceResolutionError' from 'marshmallow'` | marshmallow 4.x installed instead of 3.x | Re-install with `lastenv\Scripts\pip.exe install --no-deps -r app_requirements.txt` |
 | `DeploymentNotFound` | Wrong deployment name | Check the exact name in AI Foundry → Models + endpoints |
 | `Resource not found (404)` | Wrong endpoint URL | Use the `.openai.azure.com/` endpoint, not the Foundry project URL |
+| `404 — Could not find deployment to match model` | API key belongs to a different Azure OpenAI resource than the endpoint | Make sure the endpoint, API key, and deployment name all come from the **same** Azure OpenAI resource |
 | `Subscription ID not provided` | Env var not set | Re-run Step 4 |
 | `Workspace not found` | Wrong resource group or workspace name | Double-check in Azure Portal |
 | `Authentication failed` | Not signed in | A browser window should open automatically — sign in with your Azure account |

@@ -1,4 +1,17 @@
-"""Responsible AI analysis functions for registered Azure ML models."""
+"""Analysis functions called by the Responsible AI agent.
+
+This module is the computation layer — responsible_ai_agent.py calls these
+functions as tools and passes the results to the LLM for interpretation.
+
+Design notes:
+- The Azure ML client is created lazily on first use so importing this module
+  never crashes before credentials are configured.
+- fairness_analysis keeps a copy of the original (unencoded) X_test so that
+  group labels show real values (e.g. "male"/"female") instead of numeric codes
+  produced by the encoding step.
+- recall_score is used instead of fairlearn's true_positive_rate because
+  fairlearn crashes when a group contains only positive-class samples.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +27,18 @@ import dice_ml
 from ml_pipeline import get_ml_client
 from run_automl import detect_problem_type
 
-client = get_ml_client()
+# Lazily initialised on first use so that importing this module never crashes
+# when Azure credentials are not yet configured (e.g. during unit tests or
+# when the Streamlit app is loading before the user sets env vars).
+_client = None
+
+
+def _get_client():
+    """Return the Azure ML client, creating it on the first call."""
+    global _client
+    if _client is None:
+        _client = get_ml_client()
+    return _client
 
 
 class DiceModelAdapter:
@@ -43,6 +67,7 @@ def load_model(model_name: str, version: str | None = None):
     if not version:
         raise ValueError("Model version is required. Pass the registered model version explicitly.")
 
+    client = _get_client()
     info = client.models.get(name=model_name, **_version_kwargs(version))
     path = Path("model_artifacts") / info.name / str(info.version)
     path.mkdir(parents=True, exist_ok=True)
@@ -72,7 +97,7 @@ def load_model(model_name: str, version: str | None = None):
 
 def load_test_data(asset_name: str, version: str | None = None) -> pd.DataFrame:
     """Load an Azure ML MLTable data asset into a DataFrame."""
-    asset = client.data.get(name=asset_name, **_version_kwargs(version))
+    asset = _get_client().data.get(name=asset_name, **_version_kwargs(version))
     return importlib.import_module("mltable").load(asset.path).to_pandas_dataframe()
 
 
@@ -140,19 +165,48 @@ def fairness_analysis(
     n_bins: int = 4,
 ) -> dict:
     """Compute per-group fairness metrics for every feature."""
-    from fairlearn.metrics import MetricFrame, selection_rate, true_positive_rate
-    from sklearn.metrics import accuracy_score, mean_absolute_error
+    from fairlearn.metrics import MetricFrame, selection_rate
+    from sklearn.metrics import accuracy_score, mean_absolute_error, recall_score
 
+    import numpy as np
+    # Keep a copy of the original (unencoded) X_test so that categorical
+    # features like Sex, Embarked etc. show their real labels ("male"/"female")
+    # in the fairness output instead of the numeric codes (0.0, 1.0) produced
+    # by fill_missing_values. The encoded copy is used only for model.predict().
+    X_test_orig = X_test.copy()
     X_test = fill_missing_values(X_test)
     y_pred = model.predict(X_test)
     if hasattr(y_pred, "to_numpy"):
         y_pred = y_pred.to_numpy()
 
+    # Flatten to 1-D and cast to plain numpy int/float so that sklearn's
+    # confusion_matrix never receives a pandas nullable-boolean Series.
+    # Nullable booleans produce a mix of int and None when numpy tries to
+    # compute unique labels, causing: '<' not supported between int and NoneType.
+    y_pred_arr = np.asarray(y_pred).ravel()
+    y_true_arr = np.asarray(y_test).ravel()
+
     if task_type == "classification":
+        y_pred_arr = y_pred_arr.astype(int)
+        y_true_arr = y_true_arr.astype(int)
+
+        # WHY WE USE recall_score INSTEAD OF fairlearn's true_positive_rate:
+        #
+        # fairlearn's true_positive_rate crashes when a group contains ONLY
+        # positive-class samples (e.g. an age group where every customer churned).
+        # It builds labels=[None, 1] for the missing class, then passes it to
+        # sklearn's confusion_matrix which tries to sort it — crashing with:
+        #   TypeError: '<' not supported between instances of 'int' and 'NoneType'
+        #
+        # recall_score computes the same metric (TP / (TP + FN)) but handles
+        # this edge case safely via zero_division=0, returning 0 instead of crashing.
+        def _true_positive_rate(y_true, y_pred):
+            return recall_score(y_true, y_pred, pos_label=1, zero_division=0)
+
         metrics = {
             "accuracy":           accuracy_score,
             "selection_rate":     selection_rate,
-            "true_positive_rate": true_positive_rate,
+            "true_positive_rate": _true_positive_rate,
         }
     else:
         metrics = {"mean_abs_error": mean_absolute_error}
@@ -160,9 +214,21 @@ def fairness_analysis(
     features = sensitive_features if sensitive_features is not None else list(X_test.columns)
     results = {}
     for feature in features:
-        col = X_test[feature]
-        groups = col if col.dtype == "object" or col.nunique() <= 10 else pd.qcut(col, q=n_bins, duplicates="drop")
-        results[feature] = MetricFrame(metrics=metrics, y_true=y_test, y_pred=y_pred, sensitive_features=groups).by_group
+        # Use original (unencoded) column for group labels so that categorical
+        # features display their real values instead of factorize() codes.
+        col = X_test_orig[feature]
+        groups = col if col.dtype == "object" or col.nunique() <= 10 else pd.qcut(X_test[feature], q=n_bins, duplicates="drop")
+
+        # Convert group labels to str — makes them always sortable regardless of
+        # whether the underlying column is int64, float, Categorical interval, or object.
+        groups_str = groups.astype(str)
+
+        results[feature] = MetricFrame(
+            metrics=metrics,
+            y_true=y_true_arr,
+            y_pred=y_pred_arr,
+            sensitive_features=groups_str,
+        ).by_group
     return results
 
 

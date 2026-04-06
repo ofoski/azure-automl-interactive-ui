@@ -1,6 +1,10 @@
 """
-Azure AutoML Demo — Streamlit App
-Sections: New Training Job, Job Results, Responsible AI Agent
+Streamlit app for Azure AutoML model training and Responsible AI analysis.
+
+Three tabs:
+  Train Model   — upload data, submit an AutoML job, register the best model.
+  Analyse Model — view metrics for any registered model in the workspace.
+  Chat with AI  — ask the Responsible AI agent questions about a loaded model.
 """
 
 import pandas as pd
@@ -56,6 +60,26 @@ st.title("🤖 Azure AutoML — Responsible AI")
 st.markdown("Train models with Azure AutoML and analyze them for **fairness, bias, and performance**")
 
 TERMINAL_STATUSES = {"Completed", "Failed", "Canceled", "Cancelled"}
+
+
+def _fetch_registered_models(ml_client) -> dict:
+    """Return {display_label: {name, version}} for all registered models."""
+    result: dict = {}
+    for _c in ml_client.models.list():
+        _cname = getattr(_c, "name", None)
+        if not _cname:
+            continue
+        _lv = getattr(_c, "latest_version", None)
+        if not _lv:
+            try:
+                _vers = list(ml_client.models.list(name=_cname))
+                if _vers:
+                    _lv = str(max(_vers, key=lambda v: int(v.version) if str(v.version).isdigit() else 0).version)
+            except Exception:
+                pass
+        if _lv:
+            result[f"{_cname} (v{_lv})"] = {"name": _cname, "version": str(_lv)}
+    return result
 
 # Restore job from URL on reload
 _qjob = st.query_params.get("job")
@@ -224,23 +248,7 @@ with tab2:
     if st.button("Fetch registered models", key="analyze_fetch"):
         with st.spinner("Fetching…"):
             try:
-                _ml_c = get_ml_client()
-                _containers = list(_ml_c.models.list())
-                _abest: dict = {}
-                for _c in _containers:
-                    _cname = getattr(_c, "name", None)
-                    if not _cname:
-                        continue
-                    _lv = getattr(_c, "latest_version", None)
-                    if not _lv:
-                        try:
-                            _vers = list(_ml_c.models.list(name=_cname))
-                            _lv = str(max(_vers, key=lambda v: int(v.version) if str(v.version).isdigit() else 0).version) if _vers else None
-                        except Exception:
-                            pass
-                    if _lv:
-                        _abest[_cname] = {"name": _cname, "version": str(_lv)}
-                st.session_state["analyze_models"] = {f"{v['name']} (v{v['version']})": v for v in _abest.values()}
+                st.session_state["analyze_models"] = _fetch_registered_models(get_ml_client())
                 st.rerun()
             except Exception as _exc:
                 st.error(f"Could not fetch: {_exc}")
@@ -301,29 +309,7 @@ with tab3:
             if st.button("Fetch registered models", key="rai_fetch", use_container_width=True):
                 with st.spinner("Fetching…"):
                     try:
-                        _ml_c = get_ml_client()
-                        _containers = list(_ml_c.models.list())
-                        _best: dict = {}
-                        for _c in _containers:
-                            _cname = getattr(_c, "name", None)
-                            if not _cname:
-                                continue
-                            _latest_v = getattr(_c, "latest_version", None)
-                            if not _latest_v:
-                                try:
-                                    _vers = list(_ml_c.models.list(name=_cname))
-                                    if not _vers:
-                                        continue
-                                    def _vkey(v):
-                                        try: return int(v.version)
-                                        except Exception: return 0
-                                    _latest_v = str(max(_vers, key=_vkey).version)
-                                except Exception:
-                                    continue
-                            _best[_cname] = {"name": _cname, "version": str(_latest_v)}
-                        st.session_state["rai_available_models"] = {
-                            f"{v['name']} (v{v['version']})": v for v in _best.values()
-                        }
+                        st.session_state["rai_available_models"] = _fetch_registered_models(get_ml_client())
                         st.rerun()
                     except Exception as _exc:
                         st.error(f"Could not fetch: {_exc}")
