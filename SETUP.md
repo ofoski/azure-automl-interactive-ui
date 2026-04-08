@@ -117,32 +117,20 @@ AZURE_OPENAI_DEPLOYMENT=gpt-4.1
 
 ### Install dependencies
 
-**Windows:**
 ```powershell
 python -m venv venv
 venv\Scripts\pip.exe install --no-deps -r app_requirements.txt
-```
-
-**macOS / Linux:**
-```bash
-python3 -m venv venv
-source venv/bin/activate
-pip install --no-deps -r app_requirements.txt
 ```
 
 > **Why `--no-deps`?** Some Azure ML packages have conflicting transitive dependencies. `--no-deps` installs exactly the pinned versions in `app_requirements.txt` without automatic resolution. All transitive dependencies are already listed in the file.
 
 ### Run the app
 
-The app reads credentials from environment variables. You must load the `.env` file into your shell session before starting Streamlit — all three commands must run in the **same terminal**.
+The app reads credentials from environment variables. You must load the `.env` file into your shell session before starting Streamlit — both commands must run in the **same terminal**.
 
-**Windows (PowerShell):**
 ```powershell
-# 1. Load .env into the current shell session
-Get-Content .env | Where-Object { $_ -notmatch '^#' -and $_ -match '=' } | ForEach-Object {
-    $name, $value = $_ -split '=', 2
-    [System.Environment]::SetEnvironmentVariable($name.Trim(), $value.Trim())
-}
+# 1. Load .env into the current shell session (one-liner)
+Get-Content .env | Where-Object { $_ -match '^\w' } | ForEach-Object { $k,$v=$_ -split '=',2; Set-Item "env:$k" $v }
 
 # 2. Activate venv and run
 .\venv\Scripts\Activate.ps1

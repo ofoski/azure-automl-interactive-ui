@@ -114,10 +114,7 @@ copy .env.example .env
 # Edit .env and fill in your values
 
 # 3. Load .env into the shell, then run (must be the same terminal)
-Get-Content .env | Where-Object { $_ -notmatch '^#' -and $_ -match '=' } | ForEach-Object {
-    $name, $value = $_ -split '=', 2
-    [System.Environment]::SetEnvironmentVariable($name.Trim(), $value.Trim())
-}
+Get-Content .env | Where-Object { $_ -match '^\w' } | ForEach-Object { $k,$v=$_ -split '=',2; Set-Item "env:$k" $v }
 .\venv\Scripts\Activate.ps1
 streamlit run app.py
 ```
@@ -142,7 +139,7 @@ App available at [http://localhost:8501](http://localhost:8501)
 
 ## 📋 Requirements
 
-- Python 3.10+ (Option A)
+- Python 3.10+
 - Docker Desktop (Option B)
 - An **Azure ML workspace**
 - An **Azure OpenAI resource** with a GPT-4 deployment
