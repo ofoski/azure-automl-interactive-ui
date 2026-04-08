@@ -1,6 +1,12 @@
 # Virtual Environments
 .venv/
 venv/
+lastenv/
+testenv/
+finalenvtest/
+
+# Environment secrets — never commit real credentials
+.env
 
 # Temporary uploads folder
 uploads/

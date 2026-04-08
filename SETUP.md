@@ -1,111 +1,207 @@
 # Setup Guide
 
-This guide walks you through setting up the project from scratch.
+This guide walks you through two ways to run the app: **Option A — local pip install** and **Option B — Docker**. Both use a `.env` file for credentials.
 
 ---
 
 ## Prerequisites
 
+**Both options:**
+- **Azure subscription** with an Azure ML workspace
+- **Azure AI Foundry** with an Azure OpenAI resource and a model deployment
+- An **Azure App Registration** (service principal) — required for Docker, recommended for local
+
+**Option A only:**
 - **Python 3.10 or later** — [download here](https://www.python.org/downloads/)
-- **Azure subscription** — with an Azure ML workspace created
-- **Azure AI Foundry** — with an Azure OpenAI resource and a model deployment
+
+**Option B only:**
+- **Docker Desktop** — [download here](https://www.docker.com/products/docker-desktop/) — must be running before you use `docker compose`
 
 ---
 
-## Step 1 — Install dependencies
-
-**Windows (recommended):** Create a virtual environment, then use the venv's pip directly:
-
-```powershell
-python -m venv lastenv
-lastenv\Scripts\pip.exe install --no-deps -r app_requirements.txt
-```
-
-> **Why `--no-deps`?** Some Azure ML packages have conflicting transitive dependencies (e.g. `psutil`). Using `--no-deps` installs exactly the pinned versions in `app_requirements.txt` without automatic dependency resolution, which avoids version conflicts. All required packages including transitive dependencies are already listed in the file.
-
-**macOS / Linux:**
-```bash
-python3 -m venv lastenv
-source lastenv/bin/activate
-pip install --no-deps -r app_requirements.txt
-```
-
----
-
-## Step 2 — Deploy a GPT model (one-time)
+## Step 1 — Deploy a GPT model (one-time)
 
 You need a GPT deployment in **Azure AI Foundry** for the Responsible AI agent to work.
 
 1. Go to [Azure AI Foundry](https://ai.azure.com) → select your project
 2. Left menu → **Models + endpoints** → **+ Deploy model** → **Deploy base model**
-3. Select `gpt-4o-mini` (recommended — cheap and reliable)
-4. Set a **Deployment name** — e.g. `gpt-4o-mini`
+3. Select `gpt-4.1` (or `gpt-4o-mini` as a cheaper alternative)
+4. Set a **Deployment name** — e.g. `gpt-4.1`
 5. Click **Deploy** and wait ~1 minute
 
 ---
 
-## Step 3 — Collect your credentials
+## Step 2 — Create an Azure App Registration (service principal)
 
-You need values from two places:
+This creates a non-human identity the app can use to authenticate to Azure programmatically. **Required for Docker** (no browser available inside a container). Recommended for local too — it avoids relying on interactive browser login every session.
 
-### From Azure ML workspace (Azure Portal)
-Go to [portal.azure.com](https://portal.azure.com) → search for your ML workspace → **Overview**
+1. Go to [portal.azure.com](https://portal.azure.com) → search for **Microsoft Entra ID** → select it
+2. Left menu → **App registrations** → **+ New registration**
+3. Give it a name (e.g. `automl-demo-app`) → click **Register**
+4. You are now on the app's overview page. Copy these two values:
 
 | What you need | Where to find it |
 |---|---|
-| Subscription ID | Overview page → "Subscription ID" |
-| Resource group | Overview page → "Resource group" |
-| Workspace name | Overview page → "Name" |
+| **Tenant ID** (`AZURE_TENANT_ID`) | Overview → "Directory (tenant) ID" |
+| **Client ID** (`AZURE_CLIENT_ID`) | Overview → "Application (client) ID" |
+
+5. Left menu → **Certificates & secrets** → **Client secrets** tab → **+ New client secret**
+6. Add a description and choose an expiry → click **Add**
+7. **Immediately copy the value from the `Value` column** (not the `Secret ID` column). This is your `AZURE_CLIENT_SECRET`. It will never be shown again after you leave this page.
+
+---
+
+## Step 3 — Grant the service principal Contributor access
+
+The app needs permission to read from and write to your Azure ML workspace. Assign Contributor at the **resource group** level so it can access the workspace, storage, and any other resources within it.
+
+1. Go to [portal.azure.com](https://portal.azure.com) → navigate to your **Resource Group** (the one containing your ML workspace)
+2. Left menu → **Access control (IAM)** → **+ Add** → **Add role assignment**
+3. On the **Role** tab: search for and select **Contributor** → click **Next**
+4. On the **Members** tab: select **User, group, or service principal** → click **+ Select members**
+5. Search for the app registration name you created in Step 2 (e.g. `automl-demo-app`) → select it → click **Select** → click **Review + assign**
+
+> **Why resource group level?** Assigning at the workspace level alone is not sufficient — the service principal also needs access to the storage account and other resources in the same group.
+
+---
+
+## Step 4 — Collect your credentials
+
+### From Azure ML workspace
+Go to [portal.azure.com](https://portal.azure.com) → your ML workspace → **Overview**
+
+| What you need | Where to find it |
+|---|---|
+| `AZURE_SUBSCRIPTION_ID` | Overview → "Subscription ID" |
+| `AZURE_RESOURCE_GROUP` | Overview → "Resource group" |
+| `AZURE_WORKSPACE_NAME` | Overview → "Name" |
 
 ### From Azure AI Foundry
 Go to [ai.azure.com](https://ai.azure.com) → your project → **Overview**
 
 | What you need | Where to find it |
 |---|---|
-| Azure OpenAI endpoint | Overview → "Azure OpenAI endpoint" (ends in `.openai.azure.com/`) |
-| API key | Overview → "API keys" → Key 1 |
-| Deployment name | Models + endpoints → your deployment name (what you typed in Step 2) |
+| `AZURE_OPENAI_ENDPOINT` | Overview → "Azure OpenAI endpoint" (ends in `.openai.azure.com/`) |
+| `AZURE_OPENAI_API_KEY` | Overview → "API keys" → Key 1 |
+| `AZURE_OPENAI_DEPLOYMENT` | Models + endpoints → your deployment name from Step 1 |
 
 ---
 
-## Step 4 — Set environment variables
+## Step 5 — Create your `.env` file
 
-Run these in PowerShell **before** starting the app. Replace each `<...>` with your actual value.
+Copy the example file and fill in all values:
 
 ```powershell
-# Azure ML workspace
-$env:AZURE_SUBSCRIPTION_ID   = "<your-subscription-id>"
-$env:AZURE_RESOURCE_GROUP    = "<your-resource-group>"
-$env:AZURE_WORKSPACE_NAME    = "<your-workspace-name>"
-
-# Azure OpenAI (for the RAI agent)
-$env:AZURE_OPENAI_ENDPOINT   = "https://<resource-name>.openai.azure.com/"
-$env:AZURE_OPENAI_API_KEY    = "<your-api-key>"
-$env:AZURE_OPENAI_DEPLOYMENT = "gpt-4o-mini"   # the deployment name from Step 2
+copy .env.example .env
 ```
 
-> **These are session variables.** They are only set for the current PowerShell window and are never saved to disk or committed to Git. You need to re-run these commands each time you open a new terminal.
+Open `.env` in a text editor and replace each placeholder:
 
-> **Important:** Set the variables in the **same terminal** where you run `streamlit run app.py`. If you set them in one terminal and start Streamlit in another, the app will not see them and agent calls will fail with a 404 or missing-key error.
+```
+AZURE_SUBSCRIPTION_ID=your-subscription-id
+AZURE_RESOURCE_GROUP=your-resource-group
+AZURE_WORKSPACE_NAME=your-workspace-name
+AZURE_TENANT_ID=your-tenant-id              # from Step 2
+AZURE_CLIENT_ID=your-client-id              # from Step 2
+AZURE_CLIENT_SECRET=your-client-secret      # from Step 2 — the Value column, not Secret ID
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your-openai-api-key
+AZURE_OPENAI_DEPLOYMENT=gpt-4.1
+```
 
-> **Tip:** To make env vars persist across terminal sessions, append them to `lastenv\Scripts\Activate.ps1`. They will be set automatically every time you activate the venv.
-
-> **Azure authentication:** When the app connects to Azure for the first time, a browser window will open automatically asking you to sign in. Tenant ID is resolved automatically from your login — no need to set it manually.
+> **Never commit `.env` to Git.** It is already listed in `.gitignore`. Treat it like a password file.
 
 ---
 
-## Verify all variables are set
+## Option A — Local pip install
+
+### Install dependencies
+
+**Windows:**
+```powershell
+python -m venv venv
+venv\Scripts\pip.exe install --no-deps -r app_requirements.txt
+```
+
+**macOS / Linux:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install --no-deps -r app_requirements.txt
+```
+
+> **Why `--no-deps`?** Some Azure ML packages have conflicting transitive dependencies. `--no-deps` installs exactly the pinned versions in `app_requirements.txt` without automatic resolution. All transitive dependencies are already listed in the file.
+
+### Run the app
+
+The app reads credentials from environment variables. You must load the `.env` file into your shell session before starting Streamlit — all three commands must run in the **same terminal**.
+
+**Windows (PowerShell):**
+```powershell
+# 1. Load .env into the current shell session
+Get-Content .env | Where-Object { $_ -notmatch '^#' -and $_ -match '=' } | ForEach-Object {
+    $name, $value = $_ -split '=', 2
+    [System.Environment]::SetEnvironmentVariable($name.Trim(), $value.Trim())
+}
+
+# 2. Activate venv and run
+.\venv\Scripts\Activate.ps1
+streamlit run app.py
+```
+
+
+
+> **Important:** If you open a new terminal and run `streamlit run app.py` without loading `.env` first, the app will start but all Azure calls will fail with missing credentials errors.
+
+> **Azure authentication (local):** The app uses `DefaultAzureCredential` which picks up the service principal credentials from the environment. If `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` are all set, no browser login is needed.
+
+---
+
+## Option B — Docker
+
+### First-time build and run
+
+Make sure Docker Desktop is running, then:
 
 ```powershell
-@("AZURE_OPENAI_ENDPOINT","AZURE_OPENAI_API_KEY","AZURE_OPENAI_DEPLOYMENT",
-  "AZURE_SUBSCRIPTION_ID","AZURE_RESOURCE_GROUP","AZURE_WORKSPACE_NAME") |
+docker compose up --build
+```
+
+The first build downloads and installs all dependencies — expect approximately 30–40 minutes. Subsequent starts reuse the built image and take under 10 seconds.
+
+```powershell
+docker compose up
+```
+
+App is available at [http://localhost:8501](http://localhost:8501).
+
+> **Service principal required.** Docker containers have no browser, so interactive login is not possible. `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, and `AZURE_TENANT_ID` must all be set in your `.env` file. The app will fail immediately at startup if any of these are missing when running inside Docker.
+
+### Stop the container
+
+```powershell
+docker compose down
+```
+
+---
+
+## Verify your `.env` is complete
+
+```powershell
+@("AZURE_SUBSCRIPTION_ID","AZURE_RESOURCE_GROUP","AZURE_WORKSPACE_NAME",
+  "AZURE_TENANT_ID","AZURE_CLIENT_ID","AZURE_CLIENT_SECRET",
+  "AZURE_OPENAI_ENDPOINT","AZURE_OPENAI_API_KEY","AZURE_OPENAI_DEPLOYMENT") |
   ForEach-Object {
-    $val = [System.Environment]::GetEnvironmentVariable($_)
-    if ($val) { Write-Host "OK      $_" } else { Write-Host "MISSING $_" }
+    $line = Get-Content .env | Where-Object { $_ -match "^$_=" }
+    if ($line -and ($line -split "=",2)[1].Trim()) {
+      Write-Host "OK      $_"
+    } else {
+      Write-Host "MISSING $_"
+    }
   }
 ```
 
-All six should show `OK`.
+All nine should show `OK` before starting the app.
 
 ---
 
@@ -113,11 +209,13 @@ All six should show `OK`.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `ModuleNotFoundError: No module named 'azure.ai.ml'` | `pip` installed into system Python, not the venv | Use `lastenv\Scripts\pip.exe install --no-deps -r app_requirements.txt` |
-| `ImportError: cannot import name 'FieldInstanceResolutionError' from 'marshmallow'` | marshmallow 4.x installed instead of 3.x | Re-install with `lastenv\Scripts\pip.exe install --no-deps -r app_requirements.txt` |
-| `DeploymentNotFound` | Wrong deployment name | Check the exact name in AI Foundry → Models + endpoints |
+| `ModuleNotFoundError: No module named 'azure.ai.ml'` | pip installed into system Python, not the venv | Use `venv\Scripts\pip.exe install --no-deps -r app_requirements.txt` |
+| `ImportError: cannot import name 'FieldInstanceResolutionError' from 'marshmallow'` | marshmallow 4.x installed | Re-install: `venv\Scripts\pip.exe install --no-deps -r app_requirements.txt` |
+| `DeploymentNotFound` | Wrong deployment name | Check exact name in AI Foundry → Models + endpoints |
 | `Resource not found (404)` | Wrong endpoint URL | Use the `.openai.azure.com/` endpoint, not the Foundry project URL |
-| `404 — Could not find deployment to match model` | API key belongs to a different Azure OpenAI resource than the endpoint | Make sure the endpoint, API key, and deployment name all come from the **same** Azure OpenAI resource |
-| `Subscription ID not provided` | Env var not set | Re-run Step 4 |
-| `Workspace not found` | Wrong resource group or workspace name | Double-check in Azure Portal |
-| `Authentication failed` | Not signed in | A browser window should open automatically — sign in with your Azure account |
+| `404 — Could not find deployment to match model` | API key from different resource than endpoint | Endpoint, API key, and deployment must come from the **same** Azure OpenAI resource |
+| `ClientSecretCredential authentication failed` | Wrong tenant ID, client ID, or secret value | Re-check Step 2 — ensure you copied the secret **Value**, not the **Secret ID** |
+| `AuthorizationFailed` | Service principal lacks permissions | Re-check Step 3 — role must be assigned at **resource group** level, not just workspace |
+| `Subscription ID not provided` | Missing `.env` value | Check `AZURE_SUBSCRIPTION_ID` in `.env` |
+| `Workspace not found` | Wrong resource group or workspace name | Cross-check with Azure Portal |
+| Docker container exits immediately | Missing service principal credentials | All three of `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` must be in `.env` |

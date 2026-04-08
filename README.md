@@ -100,34 +100,53 @@ app_requirements.txt        # Pinned dependencies (install with --no-deps)
 
 ## 🚀 Quick start
 
-See [SETUP.md](SETUP.md) for full setup instructions.
+See [SETUP.md](SETUP.md) for full setup instructions including Azure App Registration and access control.
+
+### Option A — Local (pip install)
 
 ```powershell
-# 1. Install dependencies
-python -m venv lastenv
-lastenv\Scripts\pip.exe install --no-deps -r app_requirements.txt
+# 1. Create a virtual environment and install dependencies
+python -m venv venv
+venv\Scripts\pip.exe install --no-deps -r app_requirements.txt
 
-# 2. Set environment variables (see SETUP.md)
-$env:AZURE_SUBSCRIPTION_ID   = "..."
-$env:AZURE_RESOURCE_GROUP    = "..."
-$env:AZURE_WORKSPACE_NAME    = "..."
-$env:AZURE_TENANT_ID         = "..."
-$env:AZURE_OPENAI_ENDPOINT   = "..."
-$env:AZURE_OPENAI_API_KEY    = "..."
-$env:AZURE_OPENAI_DEPLOYMENT = "gpt-4.1"
+# 2. Create your .env file (see SETUP.md for all required values)
+copy .env.example .env
+# Edit .env and fill in your values
 
-# 3. Run
-.\lastenv\Scripts\Activate.ps1
+# 3. Load .env into the shell, then run (must be the same terminal)
+Get-Content .env | Where-Object { $_ -notmatch '^#' -and $_ -match '=' } | ForEach-Object {
+    $name, $value = $_ -split '=', 2
+    [System.Environment]::SetEnvironmentVariable($name.Trim(), $value.Trim())
+}
+.\venv\Scripts\Activate.ps1
 streamlit run app.py
 ```
+
+### Option B — Docker
+
+```powershell
+# 1. Create your .env file (service principal credentials required)
+copy .env.example .env
+# Edit .env and fill in all values including AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID
+
+# 2. Build and run (first time — allow ~35 minutes)
+docker compose up --build
+
+# 3. Subsequent runs (fast)
+docker compose up
+```
+
+App available at [http://localhost:8501](http://localhost:8501)
 
 ---
 
 ## 📋 Requirements
 
-- Python 3.10+
+- Python 3.10+ (Option A)
+- Docker Desktop (Option B)
 - An **Azure ML workspace**
-- An **Azure OpenAI resource** with a GPT-4o-mini (or similar) deployment
+- An **Azure OpenAI resource** with a GPT-4 deployment
+- An **Azure App Registration** (service principal) with Contributor role on the resource group — required for Docker, optional for local
 
 > **Install note:** Use `pip install --no-deps -r app_requirements.txt` (not bare `pip install -r`) to avoid version conflicts between Azure ML packages.
 

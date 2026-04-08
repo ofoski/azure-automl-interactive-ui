@@ -1,0 +1,40 @@
+# ── Secrets — NEVER send to Docker engine ────────────────────────────────
+# Your Azure credentials. If this were sent, anyone with the image could
+# extract your subscription ID, client secret, and OpenAI key.
+.env
+
+# ── Virtual environments — huge folders, not needed in image ─────────────
+# Docker installs its own packages from app_requirements.txt.
+# These folders are GBs and would massively slow down the build context.
+.venv/
+
+# ── Downloaded model artifacts — not needed in image ─────────────────────
+# Models live in Azure ML and are downloaded at runtime.
+# Including them would add GBs to the image for no reason.
+model_artifacts/
+
+# ── User uploads — served via volume mount in docker-compose.yml ─────────
+# The container accesses ./uploads via the volume, not a baked-in copy.
+uploads/
+
+# ── Git history — not needed to run the app ──────────────────────────────
+.git/
+.gitignore
+
+# ── Python cache — generated automatically inside container ──────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ── Editor and OS files ───────────────────────────────────────────────────
+.vscode/
+.idea/
+*.code-workspace
+Thumbs.db
+.DS_Store
+
+# ── Temp/log files created during testing ────────────────────────────────
+install_check_log.txt
+mlflow.db
+*.log
