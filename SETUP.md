@@ -57,7 +57,7 @@ The app needs permission to read from and write to your Azure ML workspace. Assi
 
 1. Go to [portal.azure.com](https://portal.azure.com) → navigate to your **Resource Group** (the one containing your ML workspace)
 2. Left menu → **Access control (IAM)** → **+ Add** → **Add role assignment**
-3. On the **Role** tab: search for and select **Contributor** → click **Next**
+3. On the **Role** tab: search for and select **AzureML Data Scientistr** → click **Next**
 4. On the **Members** tab: select **User, group, or service principal** → click **+ Select members**
 5. Search for the app registration name you created in Step 2 (e.g. `automl-demo-app`) → select it → click **Select** → click **Review + assign**
 
