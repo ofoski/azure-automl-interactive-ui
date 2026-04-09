@@ -109,41 +109,23 @@ SYSTEM_PROMPT = (
 
     "- get_counterfactuals: returns minimal feature changes that would alter the prediction.\n"
     "COUNTERFACTUAL ANALYSIS RULES:\n"
-    "1. FILTER BEFORE PRESENTING:\n"
-    "   Each counterfactual suggestion may change one or more features at once.\n"
-    "   Evaluate the ENTIRE suggestion as a unit using these two checks.\n"
-    "   Discard the ENTIRE suggestion silently if it fails either check:\n"
-    "   (a) Non-actionable features — discard the entire suggestion if it changes ANY of:\n"
-    "       * latitude, longitude, or any spatially named feature\n"
-    "       * age, sex, gender, race, ethnicity, or any biological/identity attribute\n"
-    "       * timestamps, dates, or past events\n"
-    "       * ID, name, code, ticket, or other high-cardinality identifiers\n"
-    "       Even if other features in the same suggestion are actionable, the presence\n"
-    "       of one non-actionable feature disqualifies the whole suggestion.\n"
-    "       CRITICAL: Do NOT mention, explain, or comment on the discarded feature.\n"
-    "       Do not say 'Age is not actionable' — say nothing about it at all.\n"
-    "   (b) Unrealistic values — for each feature changed in the suggestion, look up its\n"
-    "       mean and std in DATA CONTEXT, then compute:\n"
-    "         upper_bound = mean + 3 * std\n"
-    "         lower_bound = mean - 3 * std\n"
-    "       Discard the entire suggestion if ANY changed value falls outside [lower_bound, upper_bound].\n"
-    "       Do NOT use the min or max from the dataset as the threshold — use only 3-sigma.\n"
-    "   (c) Encoded categorical values — some features are internally encoded as numbers\n"
-    "       (e.g. 0.0, 1.0, 2.0) by the model pipeline. You can identify them in DATA CONTEXT\n"
-    "       by having very few unique values that are whole numbers (2–5 distinct values).\n"
-    "       If the counterfactual suggests changing such a feature to a non-integer decimal\n"
-    "       (e.g. 0.40, 1.70, 2.30), that value is a meaningless numeric code — it has no\n"
-    "       real-world interpretation. Discard the ENTIRE suggestion silently.\n"
-    "   Do NOT list, describe, flag, or mention discarded suggestions in any way.\n"
-    "   Only present suggestions where ALL changed features pass ALL three checks.\n\n"
-    "2. WHEN NO ACTIONABLE CHANGES EXIST:\n"
-    "   If after filtering nothing remains, respond only with:\n"
-    "   'No actionable recommendations found for this instance.\n"
-    "   Please try a different instance (e.g., instance_index=1 or 2).'\n"
-    "   Do not list any discarded changes.\n\n"
-    "3. LANGUAGE RULES:\n"
-    "   For changes that passed both checks, explain each in plain language.\n"
-    "   Ground all recommendations in the actual data statistics from DATA CONTEXT.\n\n"
+    "The tool gives you a list of suggestions. Before presenting any of them, reason about\n"
+    "whether a real person could actually act on that change, based on what each feature\n"
+    "represents in the domain you identified from DATA CONTEXT.\n\n"
+    "A feature change is not actionable if it involves:\n"
+    "- A biological or physical trait a person is born with\n"
+    "- A demographic or identity attribute that does not change over time\n"
+    "- A past event — something that has already happened and cannot be undone\n"
+    "- An identifier column that labels an entity but has no causal meaning\n"
+    "For all other features, use domain reasoning: ask yourself whether a person could\n"
+    "realistically take a concrete step to change that value in the context of this dataset.\n\n"
+    "Also check that the suggested values are realistic: use the mean and std from\n"
+    "DATA CONTEXT and discard any suggestion where a changed value falls outside\n"
+    "mean ± 3 × std — those values do not occur in practice.\n\n"
+    "After presenting valid suggestions, if you excluded any because they involved\n"
+    "non-actionable features, add one brief note at the end explaining what was excluded\n"
+    "and why it cannot be changed in real life.\n"
+    "If nothing is valid, say: 'No actionable changes found — try a different row.'\n\n"
 
     "TOOL CALLING STRATEGY:\n"
     "- MODEL COMPARISON (compare trained models, which algorithm was best, training scores, "
@@ -164,22 +146,6 @@ SYSTEM_PROMPT = (
     "- For specific questions: call only the relevant tool.\n"
     "- If the user asks a question similar to a previous one: summarize briefly "
     "and refer back rather than repeating the full answer.\n\n"
-
-    "ACTIONABILITY AND FEATURE REASONING:\n"
-    "Before presenting any counterfactual change, reason about whether that change "
-    "is realistically possible based on the data statistics and real world context.\n\n"
-    "Features that are generally not realistic or applicable to change:\n"
-    "- Immutable biological characteristics a person is born with\n"
-    "- Identity and demographic attributes that are fixed\n"
-    "- High cardinality identifier columns such as ID, ticket number, name — "
-    "these carry no predictive meaning\n"
-    "- Geographic coordinates such as latitude and longitude\n"
-    "- Timestamps and dates of past events\n"
-    "- Features that require significant life changes — "
-    "mention their impact but note they are not realistic to change\n\n"
-    "High cardinality features:\n"
-    "- If a feature has many unique values such as IDs, names, or codes, "
-    "flag it as not meaningful for analysis.\n\n"
 
     "RESPONSE GUIDELINES:\n"
     "- CURRENCY FORMATTING: never use the $ symbol for money values in your response. "
@@ -285,18 +251,22 @@ def run_agent(
 
     @tool
     def get_counterfactuals(instance_index: int = 0, total_cfs: int = 5) -> str:
-        """Minimal feature changes that would alter the model prediction for a specific instance. Shows original input and counterfactual alternatives. Use for what-if questions, how to improve an outcome, or what changes would flip a prediction."""
+        """Minimal feature changes that would alter the model prediction for a specific row.
+        Use for what-if questions or to find out what would need to change to flip a prediction.
+        The user can specify a row with instance_index (0-based). 'row 10' means instance_index=10."""
         key = f"cf_{instance_index}_{total_cfs}"
         if key not in cache:
             ex = run_counterfactuals(
                 context["model"], context["X_train"], context["y_train"],
                 context["X_test"], context["y_test"], context["task_type"],
                 context["target_column"], instance_index,
-                "opposite" if context["task_type"] == "classification" else None, total_cfs,
+                "opposite" if context["task_type"] == "classification" else None,
+                total_cfs,
             ).cf_examples_list[0]
             cache[key] = (
                 f"Original instance (index {instance_index}):\n{ex.test_instance_df.to_string(index=False)}\n\n"
-                f"Counterfactuals:\n{ex.final_cfs_df.to_string(index=False) if ex.final_cfs_df is not None else 'None generated.'}"
+                f"Counterfactuals:\n"
+                f"{ex.final_cfs_df.to_string(index=False) if ex.final_cfs_df is not None else 'None generated.'}"
             )
         return cache[key]
 

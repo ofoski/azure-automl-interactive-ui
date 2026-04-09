@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   app:
     build: .
@@ -10,3 +8,10 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./model_artifacts:/app/model_artifacts
+      - ./app.py:/app/app.py
+      - ./responsible_ai_analysis.py:/app/responsible_ai_analysis.py
+      - ./responsible_ai_agent.py:/app/responsible_ai_agent.py
+      - ./model_utils.py:/app/model_utils.py
+      - ./run_automl.py:/app/run_automl.py
+      - ./register_model.py:/app/register_model.py
+      - ./ml_pipeline:/app/ml_pipeline

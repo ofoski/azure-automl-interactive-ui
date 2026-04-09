@@ -125,21 +125,8 @@ def run_permutation_importance(
     )
 
 
-def fill_missing_values(X: pd.DataFrame) -> pd.DataFrame:
-    """Fill missing values and encode object/bool columns to float."""
-    X = X.copy()
-    for col in X.columns:
-        if X[col].dtype == "object" or X[col].dtype == "bool":
-            X[col] = X[col].fillna(X[col].mode()[0])
-            X[col] = pd.factorize(X[col])[0].astype(float)
-        else:
-            X[col] = X[col].fillna(X[col].median())
-    return X
-
-
 def error_analysis(model, X_test, y_test, task_type="regression"):
     """Compute mean error per group or bin for every feature."""
-    X_test = fill_missing_values(X_test)
     df = X_test.copy()
     df["y_true"] = y_test.values
     df["y_pred"] = model.predict(X_test)
@@ -169,12 +156,6 @@ def fairness_analysis(
     from sklearn.metrics import accuracy_score, mean_absolute_error, recall_score
 
     import numpy as np
-    # Keep a copy of the original (unencoded) X_test so that categorical
-    # features like Sex, Embarked etc. show their real labels ("male"/"female")
-    # in the fairness output instead of the numeric codes (0.0, 1.0) produced
-    # by fill_missing_values. The encoded copy is used only for model.predict().
-    X_test_orig = X_test.copy()
-    X_test = fill_missing_values(X_test)
     y_pred = model.predict(X_test)
     if hasattr(y_pred, "to_numpy"):
         y_pred = y_pred.to_numpy()
@@ -216,8 +197,8 @@ def fairness_analysis(
     for feature in features:
         # Use original (unencoded) column for group labels so that categorical
         # features display their real values instead of factorize() codes.
-        col = X_test_orig[feature]
-        groups = col if col.dtype == "object" or col.nunique() <= 10 else pd.qcut(X_test[feature], q=n_bins, duplicates="drop")
+        col = X_test[feature]
+        groups = col if col.dtype == "object" or col.nunique() <= 10 else pd.qcut(col, q=n_bins, duplicates="drop")
 
         # Convert group labels to str — makes them always sortable regardless of
         # whether the underlying column is int64, float, Categorical interval, or object.
@@ -243,19 +224,32 @@ def run_counterfactuals(
     instance_index: int = 0,
     desired_class: str | int | None = "opposite",
     total_cfs: int = 5,
+    features_to_vary: list[str] | None = None,
 ):
-    """Generate counterfactual examples for a single test instance using DiCE."""
-    X_train = fill_missing_values(X_train)
-    X_test = fill_missing_values(X_test)
-    train_cf = X_train.copy()
+    """Generate counterfactual examples for a single test instance using DiCE.
+
+    features_to_vary: columns DiCE is allowed to change. Pass a subset to lock
+                      certain features constant (e.g. keep Age fixed at its current
+                      value by omitting it from the list). If None, all features vary.
+    """
+    # DiCE needs NaN-free data to compute feature value ranges for candidate sampling.
+    # The AutoML model still receives the original data (with NaN) for its predictions.
+    X_train_cf = X_train.fillna(X_train.mode().iloc[0])
+    X_test_cf = X_test.fillna(X_test.mode().iloc[0])
+
+    # Combine filled training features with the target so DiCE can learn the data distribution.
+    train_cf = X_train_cf.copy()
     train_cf[target_column] = y_train.values
 
+    # Identify numeric columns — DiCE needs to know which features are continuous vs categorical.
     continuous_features = list(X_train.select_dtypes(include=["number", "bool"]).columns)
     data = dice_ml.Data(
         dataframe=train_cf,
         continuous_features=continuous_features,
         outcome_name=target_column,
     )
+
+    # Wrap the AutoML pipeline in an adapter so DiCE can call predict() through it.
     dice_model = dice_ml.Model(
         model=DiceModelAdapter(model),
         backend="sklearn",
@@ -263,17 +257,25 @@ def run_counterfactuals(
     )
     exp = dice_ml.Dice(data, dice_model, method="random")
 
-    query_instance = X_test.iloc[[instance_index]]
+    # Pick the single row we want to generate counterfactuals for.
+    query_instance = X_test_cf.iloc[[instance_index]]
+
+    # Build kwargs — if the caller restricted which features to vary, pass that constraint.
+    # Example: features_to_vary=["Pclass", "Fare"] keeps Age, Sex, etc. locked at their
+    # current values, producing counterfactuals that only change actionable features.
+    cf_kwargs = {"total_CFs": total_cfs}
+    if features_to_vary:
+        cf_kwargs["features_to_vary"] = features_to_vary
 
     if task_type == "classification":
         return exp.generate_counterfactuals(
             query_instance,
-            total_CFs=total_cfs,
             desired_class=desired_class,
+            **cf_kwargs,
         )
 
     # Auto compute desired_range from actual value of that specific row
-    current_pred = float(model.predict(X_test.iloc[[instance_index]])[0])
+    current_pred = float(model.predict(query_instance)[0])
     actual_value = float(y_test.iloc[instance_index])
 
     if current_pred < actual_value:

@@ -87,6 +87,9 @@ def register_train_test_data(
 
     df = _prepare_automl_dataframe(df, target_column)
 
+    # AutoML handles NaN in features, but the target column must not be missing.
+    df = df.dropna(subset=[target_column])
+
     stratify = None
     if problem_type == "Classification":
         stratify = df[target_column]
