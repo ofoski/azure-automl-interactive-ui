@@ -1,0 +1,53 @@
+# Runs lint checks and the test suite on every push and pull request to main/master.
+# All Azure calls are mocked in conftest.py, so no cloud credentials are needed.
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    name: Run lint + test suite (Python 3.10)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+          # Listing both files means the pip cache is refreshed when either changes.
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          # Production deps are installed first because azure-ai-ml is imported at module
+          # level in ml_pipeline/ and must resolve even though Azure calls are mocked.
+          pip install -r requirements.txt
+          pip install -r requirements-dev.txt
+
+      # ruff check: catches unused imports, undefined names, and PEP-8 style errors.
+      # ruff format --check: fails if any file has formatting differences (whitespace, quotes, etc.).
+      # Both are scoped to tests/ — the files we own and control.
+      - name: Lint with ruff
+        run: |
+          ruff check tests/
+          ruff format --check tests/
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v \
+            --cov=ml_pipeline \
+            --cov=run_automl \
+            --cov-report=term-missing  # shows which specific lines are not covered
+

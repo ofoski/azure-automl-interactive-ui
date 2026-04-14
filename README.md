@@ -4,6 +4,8 @@
 ![LangGraph](https://img.shields.io/badge/LangGraph-6B4FBB?logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Streamlit-FF4B4B?logo=streamlit&logoColor=white)
 ![Azure OpenAI](https://img.shields.io/badge/Azure-OpenAI-0078D4?logo=microsoftazure&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-2496ED?logo=docker&logoColor=white)
+[![CI](https://github.com/ofoski/azure-automl-interactive-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/ofoski/azure-automl-interactive-ui/actions/workflows/ci.yml)
 
 # 🤖 Azure AutoML — Responsible AI Demo
 
@@ -93,8 +95,31 @@ ml_pipeline/
     data.py                 # Splits a CSV and registers train/test splits as Azure ML data assets
     job.py                  # Builds and submits the AutoML job configuration
 data/                       # Sample datasets
+tests/                      # Automated test suite (runs locally and in CI without Azure credentials)
+    conftest.py             # Mocks Azure client and stubs streamlit so tests work offline
+    test_pipeline_logic.py  # Tests for data cleaning, problem detection, and edge cases
+    data/                   # Small 50-row CSV samples used by the tests
+.github/workflows/ci.yml    # GitHub Actions — runs lint and tests on every push/PR
+Dockerfile                  # Builds the production Docker image
+docker-compose.yml          # Single-command local run via Docker
 app_requirements.txt        # Pinned dependencies (install with --no-deps)
+requirements-dev.txt        # Test and lint tools (pytest, ruff) — not needed in production
 ```
+
+---
+
+## ✅ CI (Continuous Integration)
+
+This project uses **GitHub Actions** for Continuous Integration. Every time code is pushed or a pull request is opened, GitHub automatically:
+
+1. Installs all dependencies on a clean Ubuntu machine
+2. Runs **ruff** — catches unused imports, whitespace issues, and style errors
+3. Runs **pytest** — verifies data cleaning and problem-type detection logic
+4. Reports pass/fail — a failed check is shown as a red badge and blocks the merge
+
+All Azure calls are mocked in `conftest.py`, so the pipeline runs with no cloud credentials and costs nothing.
+
+> The green/red badge at the top of this page always shows the current state of the last run.
 
 ---
 
