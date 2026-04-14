@@ -23,17 +23,15 @@ jobs:
         with:
           python-version: "3.10"
           cache: "pip"
-          # Listing both files means the pip cache is refreshed when either changes.
-          cache-dependency-path: |
-            app_requirements.txt
-            requirements-dev.txt
+          cache-dependency-path: requirements-dev.txt
 
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          # Production deps are installed first because azure-ai-ml is imported at module
-          # level in ml_pipeline/ and must resolve even though Azure calls are mocked.
-          pip install --no-deps -r app_requirements.txt
+          # Only the packages actually imported by the source modules under test.
+          # azure-ai-ml is needed because ml_pipeline/ imports it at module level.
+          pip install pandas scikit-learn==1.5.1 azure-ai-ml==1.24.0 azure-identity \
+                      mlflow mltable dice-ml marshmallow==3.26.1 fairlearn
           pip install -r requirements-dev.txt
 
       # ruff check: catches unused imports, undefined names, and PEP-8 style errors.
