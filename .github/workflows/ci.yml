@@ -25,7 +25,7 @@ jobs:
           cache: "pip"
           # Listing both files means the pip cache is refreshed when either changes.
           cache-dependency-path: |
-            requirements.txt
+            app_requirements.txt
             requirements-dev.txt
 
       - name: Install dependencies
@@ -33,7 +33,7 @@ jobs:
           pip install --upgrade pip
           # Production deps are installed first because azure-ai-ml is imported at module
           # level in ml_pipeline/ and must resolve even though Azure calls are mocked.
-          pip install -r requirements.txt
+          pip install --no-deps -r app_requirements.txt
           pip install -r requirements-dev.txt
 
       # ruff check: catches unused imports, undefined names, and PEP-8 style errors.
