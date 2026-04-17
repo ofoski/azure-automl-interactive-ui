@@ -25,7 +25,7 @@ from sklearn.inspection import permutation_importance
 import dice_ml
 
 from ml_pipeline import get_ml_client
-from run_automl import detect_problem_type
+from training.run_automl import detect_problem_type
 
 # Lazily initialised on first use so that importing this module never crashes
 # when Azure credentials are not yet configured (e.g. during unit tests or
@@ -237,17 +237,48 @@ def run_counterfactuals(
     X_train_cf = X_train.fillna(X_train.mode().iloc[0])
     X_test_cf = X_test.fillna(X_test.mode().iloc[0])
 
+    # Keep track of which features are truly continuous in the original data.
+    continuous_features = [
+        col for col in X_train.columns
+        if pd.api.types.is_numeric_dtype(X_train[col])
+    ]
+
+    # Convert non-numeric columns to stable train/test-aligned int codes for DiCE.
+    # Also build a reverse map so we can decode int codes back to labels in the output.
+    label_map: dict[str, dict] = {}
+    for col in X_train_cf.columns:
+        if not pd.api.types.is_numeric_dtype(X_train_cf[col]):
+            train_cat = pd.Categorical(X_train_cf[col])
+            X_train_cf[col] = train_cat.codes
+            X_test_cf[col] = pd.Categorical(X_test_cf[col], categories=train_cat.categories).codes
+
+            # Unknown categories in test become -1; map them to most frequent seen train code.
+            fallback_code = pd.Series(X_train_cf[col]).mode().iloc[0]
+            X_test_cf.loc[X_test_cf[col] == -1, col] = fallback_code
+
+            # Reverse map: {0: 'France', 1: 'Germany', ...}
+            label_map[col] = {i: cat for i, cat in enumerate(train_cat.categories)}
+
+    # Normalise all dtypes to float64 — handles int8 (from Categorical.codes),
+    # Int64 (nullable extension type from MLTable), and any other non-standard numeric.
+    X_train_cf = X_train_cf.astype(float)
+    X_test_cf = X_test_cf.astype(float)
+
     # Combine filled training features with the target so DiCE can learn the data distribution.
     train_cf = X_train_cf.copy()
     train_cf[target_column] = y_train.values
 
-    # Identify numeric columns — DiCE needs to know which features are continuous vs categorical.
-    continuous_features = list(X_train.select_dtypes(include=["number", "bool"]).columns)
-    data = dice_ml.Data(
-        dataframe=train_cf,
-        continuous_features=continuous_features,
-        outcome_name=target_column,
-    )
+    try:
+        data = dice_ml.Data(
+            dataframe=train_cf,
+            continuous_features=continuous_features,
+            outcome_name=target_column,
+        )
+    except ValueError as exc:
+        if "Unknown data type of feature" in str(exc):
+            dtypes = ", ".join(f"{c}:{train_cf[c].dtype}" for c in train_cf.columns)
+            raise ValueError(f"{exc} | DiCE input dtypes: {dtypes}") from exc
+        raise
 
     # Wrap the AutoML pipeline in an adapter so DiCE can call predict() through it.
     dice_model = dice_ml.Model(
@@ -267,12 +298,26 @@ def run_counterfactuals(
     if features_to_vary:
         cf_kwargs["features_to_vary"] = features_to_vary
 
+    def _decode(df):
+        """Replace integer codes with original category labels in a DiCE output DataFrame."""
+        if df is None:
+            return df
+        df = df.copy()
+        for col, mapping in label_map.items():
+            if col in df.columns:
+                df[col] = df[col].apply(lambda v: mapping.get(int(round(float(v))), v))
+        return df
+
     if task_type == "classification":
-        return exp.generate_counterfactuals(
+        result = exp.generate_counterfactuals(
             query_instance,
             desired_class=desired_class,
             **cf_kwargs,
         )
+        for ex in result.cf_examples_list:
+            ex.test_instance_df = _decode(ex.test_instance_df)
+            ex.final_cfs_df = _decode(ex.final_cfs_df)
+        return result
 
     # Auto compute desired_range from actual value of that specific row
     current_pred = float(model.predict(query_instance)[0])
@@ -291,11 +336,15 @@ def run_counterfactuals(
 
     desired_range = [lower, upper]
 
-    return exp.generate_counterfactuals(
+    result = exp.generate_counterfactuals(
         query_instance,
         total_CFs=total_cfs,
         desired_range=desired_range,
     )
+    for ex in result.cf_examples_list:
+        ex.test_instance_df = _decode(ex.test_instance_df)
+        ex.final_cfs_df = _decode(ex.final_cfs_df)
+    return result
 
 
 def infer_train_asset_name(test_asset_name: str) -> str:

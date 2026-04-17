@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 from langchain_openai import AzureChatOpenAI
 from langgraph.prebuilt import create_react_agent
 
-from responsible_ai_analysis import (
+from responsible_ai.responsible_ai_analysis import (
     build_data_context,
     error_analysis,
     fairness_analysis,
@@ -109,22 +109,34 @@ SYSTEM_PROMPT = (
 
     "- get_counterfactuals: returns minimal feature changes that would alter the prediction.\n"
     "COUNTERFACTUAL ANALYSIS RULES:\n"
-    "The tool gives you a list of suggestions. Before presenting any of them, reason about\n"
-    "whether a real person could actually act on that change, based on what each feature\n"
-    "represents in the domain you identified from DATA CONTEXT.\n\n"
-    "A feature change is not actionable if it involves:\n"
+    "STEP 1 — READ THE CURRENT PREDICTION:\n"
+    "Look at the 'Original instance' section in the tool output. Read the target column value\n"
+    "in that row — this is the model's current prediction for this person or entity.\n\n"
+    "STEP 2 — DETERMINE DIRECTION:\n"
+    "Decide what the user is asking for: do they want the prediction to stay as it is,\n"
+    "or change to a different outcome?\n"
+    "If the current prediction ALREADY matches what the user wants (e.g., they ask 'what keeps\n"
+    "this customer from leaving?' but the model already predicts they will stay),\n"
+    "open your response by stating this clearly: 'This [entity] is already predicted to [current outcome].'\n"
+    "Then present the counterfactuals as WARNING SIGNS — changes that would flip the prediction\n"
+    "to the opposite outcome. Do NOT frame these as recommendations or things the user should do.\n"
+    "Label them clearly: 'These are risk factors that could change the current prediction.'\n"
+    "If the current prediction does NOT match what the user wants, present the counterfactuals\n"
+    "as actionable changes to reach the desired outcome.\n\n"
+    "STEP 3 — ACTIONABILITY FILTER (for actionable direction only):\n"
+    "Reason about whether a real person could act on each suggested change.\n"
+    "A change is NOT actionable if it involves:\n"
     "- A biological or physical trait a person is born with\n"
     "- A demographic or identity attribute that does not change over time\n"
-    "- A past event — something that has already happened and cannot be undone\n"
-    "- An identifier column that labels an entity but has no causal meaning\n"
-    "For all other features, use domain reasoning: ask yourself whether a person could\n"
-    "realistically take a concrete step to change that value in the context of this dataset.\n\n"
-    "Also check that the suggested values are realistic: use the mean and std from\n"
-    "DATA CONTEXT and discard any suggestion where a changed value falls outside\n"
-    "mean ± 3 × std — those values do not occur in practice.\n\n"
-    "After presenting valid suggestions, if you excluded any because they involved\n"
-    "non-actionable features, add one brief note at the end explaining what was excluded\n"
-    "and why it cannot be changed in real life.\n"
+    "- A past event that cannot be undone\n"
+    "- An identifier column with no causal meaning\n"
+    "- A time-based feature (e.g., age) requiring a very large jump — present these as\n"
+    "  long-term risk signals, not short-term actions\n"
+    "For all other features, use domain reasoning based on the dataset context.\n\n"
+    "STEP 4 — REALISM CHECK:\n"
+    "Use the mean and std from DATA CONTEXT. Discard suggestions where the changed value\n"
+    "falls outside mean ± 3 × std — those values do not occur in practice.\n\n"
+    "After presenting valid suggestions, briefly note at the end any excluded non-actionable changes.\n"
     "If nothing is valid, say: 'No actionable changes found — try a different row.'\n\n"
 
     "TOOL CALLING STRATEGY:\n"
@@ -148,6 +160,10 @@ SYSTEM_PROMPT = (
     "and refer back rather than repeating the full answer.\n\n"
 
     "RESPONSE GUIDELINES:\n"
+    "- PLAIN LANGUAGE: write for a business stakeholder, not a data scientist. "
+    "Avoid raw metric names in your narrative — say 'strongly influences predictions' "
+    "rather than 'importance_mean: 0.06', and 'the model is wrong X% of the time for this group' "
+    "rather than 'misclassification rate: X%'. Use numbers only to support a plain-English point.\n"
     "- CURRENCY FORMATTING: never use the $ symbol for money values in your response. "
     "It causes rendering errors. Write currency as plain numbers with commas, "
     "e.g. write 106,067 not $106,067.\n"
@@ -160,24 +176,12 @@ SYSTEM_PROMPT = (
     "- When making recommendations: ground them in the data statistics and domain context.\n\n"
 
     "INTERPRETING METRICS CORRECTLY:\n"
-    "- A group showing low selection rate does not mean the model favors or "
-    "discriminates against that group — it simply means the model rarely predicts "
-    "the positive outcome for them. Always interpret selection rate in the context "
-    "of what the positive outcome means for that specific dataset.\n"
-    "- A group showing high selection rate does not automatically mean unfair treatment — "
-    "it means the model frequently predicts the positive outcome for that group. "
-    "Reason about whether this aligns with real world expectations before concluding bias.\n"
-    "- Performance differences between groups do not always indicate bias — "
-    "some groups may genuinely have different risk profiles or characteristics "
-    "that the model correctly learned. "
-    "Always reason about whether a performance gap reflects real world differences "
-    "or unexpected model behavior before drawing conclusions.\n"
-    "- Never label a performance difference as bias without reasoning about "
-    "whether it makes sense in the real world context of the dataset.\n"
-    "- When reporting findings always distinguish between: "
-    "'the model shows a performance gap for this group' "
-    "and 'this gap may reflect genuine differences in the data' — "
-    "present both possibilities and let the user draw their own conclusions.\n"
+    "- Differences in selection rate, accuracy, or true positive rate between groups do not "
+    "automatically mean the model is unfair. Always reason about whether a gap reflects "
+    "genuine real-world differences in the data before drawing conclusions.\n"
+    "- Never say the model is 'biased' — say it 'shows a performance gap for that group' "
+    "and always present both possibilities: the gap may reflect real-world differences in "
+    "the data, or it may indicate the model needs improvement for that group.\n"
 )
 
 # Shown to the user when the guardrail blocks a request.
@@ -291,7 +295,12 @@ def run_agent(
             )),
         ])
 
-        if not guard.content.strip().upper().startswith("YES"):
+        msg = user_message.lower()
+        counterfactual_like = any(k in msg for k in [
+            "what would need to change", "what needs to change", "not churn",
+            "prevent churn", "different outcome", "flip prediction",
+        ])
+        if not guard.content.strip().upper().startswith("YES") and not counterfactual_like:
             return _OUT_OF_SCOPE
 
         # Build the context strings that fill {data_context} and {domain_context}

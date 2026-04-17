@@ -19,7 +19,28 @@ This guide walks you through two ways to run the app: **Option A — local pip i
 
 ---
 
-## Step 1 — Deploy a GPT model (one-time)
+## Step 1 — Create an Azure ML workspace (one-time)
+
+All AutoML training, model registration, and data assets live inside an Azure ML workspace. If you already have one, skip to Step 2.
+
+1. Go to [portal.azure.com](https://portal.azure.com) → search for **Azure Machine Learning** → select it
+2. Click **+ Create** → **New workspace**
+3. Fill in the form:
+
+| Field | Guidance |
+|---|---|
+| **Subscription** | Select your Azure subscription |
+| **Resource group** | Create a new one (e.g. `automl-demo-rg`) or select an existing group |
+| **Workspace name** | e.g. `automl-demo-ws` — this becomes `AZURE_WORKSPACE_NAME` |
+| **Region** | Choose a region near you that supports AutoML compute (e.g. `East US`, `West Europe`) |
+
+4. Leave Storage account, Key vault, and Application Insights on their defaults — Azure creates them automatically
+5. Click **Review + create** → **Create** and wait ~2–3 minutes for deployment
+6. Click **Go to resource** — you are now inside your workspace
+
+---
+
+## Step 2 — Deploy a GPT model (one-time)
 
 You need a GPT deployment in **Azure AI Foundry** for the Responsible AI agent to work.
 
@@ -31,7 +52,7 @@ You need a GPT deployment in **Azure AI Foundry** for the Responsible AI agent t
 
 ---
 
-## Step 2 — Create an Azure App Registration (service principal)
+## Step 3 — Create an Azure App Registration (service principal)
 
 This creates a non-human identity the app can use to authenticate to Azure programmatically. **Required for Docker** (no browser available inside a container). Recommended for local too — it avoids relying on interactive browser login every session.
 
@@ -51,21 +72,21 @@ This creates a non-human identity the app can use to authenticate to Azure progr
 
 ---
 
-## Step 3 — Grant the service principal Contributor access
+## Step 4 — Grant the service principal Contributor access
 
 The app needs permission to read from and write to your Azure ML workspace. Assign Contributor at the **resource group** level so it can access the workspace, storage, and any other resources within it.
 
 1. Go to [portal.azure.com](https://portal.azure.com) → navigate to your **Resource Group** (the one containing your ML workspace)
 2. Left menu → **Access control (IAM)** → **+ Add** → **Add role assignment**
-3. On the **Role** tab: search for and select **AzureML Data Scientistr** → click **Next**
+3. On the **Role** tab: search for and select **AzureML Data Scientist** → click **Next**
 4. On the **Members** tab: select **User, group, or service principal** → click **+ Select members**
-5. Search for the app registration name you created in Step 2 (e.g. `automl-demo-app`) → select it → click **Select** → click **Review + assign**
+5. Search for the app registration name you created in Step 3 (e.g. `automl-demo-app`) → select it → click **Select** → click **Review + assign**
 
 > **Why resource group level?** Assigning at the workspace level alone is not sufficient — the service principal also needs access to the storage account and other resources in the same group.
 
 ---
 
-## Step 4 — Collect your credentials
+## Step 5 — Collect your credentials
 
 ### From Azure ML workspace
 Go to [portal.azure.com](https://portal.azure.com) → your ML workspace → **Overview**
@@ -87,7 +108,7 @@ Go to [ai.azure.com](https://ai.azure.com) → your project → **Overview**
 
 ---
 
-## Step 5 — Create your `.env` file
+## Step 6 — Create your `.env` file
 
 Copy the example file and fill in all values:
 
@@ -202,7 +223,7 @@ All nine should show `OK` before starting the app.
 | `DeploymentNotFound` | Wrong deployment name | Check exact name in AI Foundry → Models + endpoints |
 | `Resource not found (404)` | Wrong endpoint URL | Use the `.openai.azure.com/` endpoint, not the Foundry project URL |
 | `404 — Could not find deployment to match model` | API key from different resource than endpoint | Endpoint, API key, and deployment must come from the **same** Azure OpenAI resource |
-| `ClientSecretCredential authentication failed` | Wrong tenant ID, client ID, or secret value | Re-check Step 2 — ensure you copied the secret **Value**, not the **Secret ID** |
+| `ClientSecretCredential authentication failed` | Wrong tenant ID, client ID, or secret value | Re-check Step 3 — ensure you copied the secret **Value**, not the **Secret ID** |
 | `AuthorizationFailed` | Service principal lacks permissions | Re-check Step 3 — role must be assigned at **resource group** level, not just workspace |
 | `Subscription ID not provided` | Missing `.env` value | Check `AZURE_SUBSCRIPTION_ID` in `.env` |
 | `Workspace not found` | Wrong resource group or workspace name | Cross-check with Azure Portal |

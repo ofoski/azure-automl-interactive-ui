@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from pathlib import Path
 
-from run_automl import detect_problem_type
+from training.run_automl import detect_problem_type
 from ml_pipeline.data import _prepare_automl_dataframe
 
 DATA_DIR = Path(__file__).parent / "data"
@@ -64,7 +64,7 @@ def test_regression_detection():
 
 def test_responsible_ai_context_builder():
     """Ensures the statistical summary for the AI Agent is formatted correctly."""
-    from responsible_ai_analysis import build_data_context
+    from responsible_ai.responsible_ai_analysis import build_data_context
 
     df = pd.read_csv(TITANIC_PATH)
     target = "Survived"

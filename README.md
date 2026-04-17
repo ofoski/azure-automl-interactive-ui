@@ -85,11 +85,13 @@ Example questions you can ask the agent after loading a model:
 
 ```
 app.py                      # Streamlit UI — three tabs: Train Model, Analyse Model, Chat with AI Agent
-responsible_ai_agent.py     # The AI agent — guardrail, system prompt, tool definitions, ReAct loop
-responsible_ai_analysis.py  # The four analysis functions + model/data loading from Azure ML
-register_model.py           # Finds the best child run from a finished AutoML job and registers it
-run_automl.py               # Submits an AutoML training job and detects the prediction task
-model_utils.py              # Reads the model comparison table from AutoML job tags for the UI
+rai/
+    responsible_ai_agent.py     # The AI agent — guardrail, system prompt, tool definitions, ReAct loop
+    responsible_ai_analysis.py  # The four analysis functions + model/data loading from Azure ML
+training/
+    register_model.py           # Finds the best child run from a finished AutoML job and registers it
+    run_automl.py               # Submits an AutoML training job and detects the prediction task
+    model_utils.py              # Reads the model comparison table from AutoML job tags for the UI
 ml_pipeline/
     client.py               # Creates the Azure ML client from environment variables
     data.py                 # Splits a CSV and registers train/test splits as Azure ML data assets

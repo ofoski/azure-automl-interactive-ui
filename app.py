@@ -16,9 +16,8 @@ from pathlib import Path
 
 
 from ml_pipeline import get_ml_client
-from register_model import register_best_model
-from run_automl import (
-    DEFAULT_VM_SIZE,
+from training.register_model import register_best_model
+from training.run_automl import (
     detect_problem_type,
     get_primary_metric,
     submit_automl_job,
@@ -155,7 +154,6 @@ with tab1:
                         csv_path=_csv_ready,
                         target_column=st.session_state["target_col_sel"],
                         problem_type=st.session_state["_problem_type"],
-                        vm_size=DEFAULT_VM_SIZE,
                     )
                 st.session_state["latest_automl_job_name"] = _job
                 st.session_state["rai_target_column"] = st.session_state["target_col_sel"]
@@ -259,7 +257,7 @@ with tab2:
         _a_model = _a_models[_a_sel]
         with st.spinner("Loading model info…"):
             try:
-                from model_utils import extract_child_metrics
+                from training.model_utils import extract_child_metrics
                 _ml_c2 = get_ml_client()
                 _model_obj = _ml_c2.models.get(_a_model["name"], version=_a_model["version"])
                 _mtags = getattr(_model_obj, "tags", {}) or {}
@@ -357,7 +355,7 @@ with tab3:
             if st.button("Load model & data", key="rai_load", type="primary"):
                 with st.spinner("Loading from Azure ML…"):
                     try:
-                        from responsible_ai_analysis import load_model, load_test_data
+                        from responsible_ai.responsible_ai_analysis import load_model, load_test_data
                         _m        = load_model(_model_name, _model_version)
                         _df_test  = load_test_data(f"{_data_asset}-test")
                         _df_train = load_test_data(f"{_data_asset}-train")
@@ -379,8 +377,8 @@ with tab3:
             st.success(f"✅ Ready — task: **{_rai['task_type']}** | test rows: **{len(_rai['X_test'])}**")
 
             def _run_agent(user_msg: str) -> str:
-                from responsible_ai_agent import run_agent as _rai_fn
-                from model_utils import extract_child_metrics
+                from responsible_ai.responsible_ai_agent import run_agent as _rai_fn
+                from training.model_utils import extract_child_metrics
                 try:
                     _pjob = get_ml_client().models.get(_model_name, version=_model_version).tags.get("parent_job_name") or (_model_name[len("best-model-"):].rsplit("_", 1)[0] if _model_name.startswith("best-model-") else None)
                     _cmp_str = extract_child_metrics(get_ml_client(), _pjob).to_string(index=False) if _pjob else ""
