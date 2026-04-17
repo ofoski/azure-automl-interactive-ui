@@ -85,7 +85,7 @@ Example questions you can ask the agent after loading a model:
 
 ```
 app.py                      # Streamlit UI — three tabs: Train Model, Analyse Model, Chat with AI Agent
-rai/
+responsible_ai/
     responsible_ai_agent.py     # The AI agent — guardrail, system prompt, tool definitions, ReAct loop
     responsible_ai_analysis.py  # The four analysis functions + model/data loading from Azure ML
 training/
