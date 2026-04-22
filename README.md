@@ -174,3 +174,11 @@ App available at [http://localhost:8501](http://localhost:8501)
 
 > **Install note:** Use `pip install --no-deps -r app_requirements.txt` (not bare `pip install -r`) to avoid version conflicts between Azure ML packages.
 
+---
+
+## 🎥 Demo Video
+
+Watch the full demonstration here: [Demo Video]([paste-your-youtube-link-here](https://youtu.be/Rkzs_IH0GKw))
+
+
+
