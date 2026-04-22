@@ -178,7 +178,7 @@ App available at [http://localhost:8501](http://localhost:8501)
 
 ## 🎥 Demo Video
 
-Watch the full demonstration here: [Demo Video]([paste-your-youtube-link-here](https://youtu.be/Rkzs_IH0GKw))
+Watch the full demonstration here: [Demo Video](https://youtu.be/Rkzs_IH0GKw)
 
 
 
