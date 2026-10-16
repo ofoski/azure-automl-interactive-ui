@@ -117,7 +117,7 @@ These changes would make the application appear less risky to the model, potenti
 
 ---
 
-### Q5: If applicant 50 changed their loan intent or home ownership status, would they get approved?
+### Q5: If applicant 20 changed their loan intent or home ownership status, would they get approved?
 
 For applicant 20 to get approved, considering only changes to person_home_ownership, loan_intent, or loan_grade, the following adjustments could lead to approval:
 
